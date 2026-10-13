@@ -3,6 +3,12 @@
 /node_modules
 /build
 
+# scratch / local tooling output
+/lint.out
+
+# prisma generated client (build artifact; regenerate with `pnpm prisma:generate`)
+/src/generated
+
 # Logs
 logs
 *.log

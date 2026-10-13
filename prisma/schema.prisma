@@ -1,0 +1,1334 @@
+// ruby-veterinary Prisma schema — all 10 namespaces (ADR-0003/ADR-0015)
+// Source of truth: ruby-veterinary-docs/data-model/*.md
+// Conventions:
+//   - PKs are DB-generated UUIDs; API serialises prefixed opaque strings (api-architecture.md §8)
+//   - status/enum-like columns are text with documented value sets (VO-enforced)
+//   - no @relation across schemas; cross-context references are plain uuid string columns
+//   - partial unique indexes and append-only triggers live in migration raw SQL
+
+generator client {
+  provider              = "prisma-client"
+  output                = "../src/generated/prisma"
+  moduleFormat          = "cjs"
+  runtime               = "nodejs"
+  importFileExtension   = ""
+  generatedFileExtension = "ts"
+  previewFeatures       = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  schemas    = ["identity", "content", "publishing", "intake", "clients", "commerce", "pharmacy", "messaging", "notifications", "operations"]
+  extensions = [citext]
+}
+
+// ---------------------------------------------------------------------------
+// Schema: identity (data-model/identity.md)
+// ---------------------------------------------------------------------------
+
+/// identity.users — client/staff accounts
+model User {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email           String    @unique(map: "uq_users_email") @db.Citext
+  passwordHash    String    @map("password_hash") @db.Text
+  displayName     String?   @map("display_name") @db.Text
+  phone           String?   @db.Text // E.164
+  kind            String    @db.Text // client | staff
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz
+  status          String    @default("active") @db.Text // active | suspended | deleted
+  lastLoginAt     DateTime? @map("last_login_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz
+
+  roles            UserRole[]
+  grantedRoles     UserRole[]         @relation("UserRoleGrantor")
+  sessions         Session[]
+  staffMembership  StaffMembership?
+
+  @@index([kind, status], map: "ix_users_kind_status")
+  @@map("users")
+  @@schema("identity")
+}
+
+/// identity.roles — seeded additive role catalogue
+model Role {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code      String   @unique(map: "uq_roles_code") @db.Text // client | receptionist | veterinarian | vet_technician | practice_manager
+  name      String   @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  users UserRole[]
+
+  @@map("roles")
+  @@schema("identity")
+}
+
+/// identity.user_roles — many-to-many user↔role
+model UserRole {
+  userId    String   @map("user_id") @db.Uuid
+  roleId    String   @map("role_id") @db.Uuid
+  grantedAt DateTime @map("granted_at") @db.Timestamptz
+  grantedBy String?  @map("granted_by") @db.Uuid // practice manager user id
+
+  user       User  @relation(fields: [userId], references: [id])
+  role       Role  @relation(fields: [roleId], references: [id])
+  grantedByUser User? @relation("UserRoleGrantor", fields: [grantedBy], references: [id])
+
+  @@id([userId, roleId])
+  @@map("user_roles")
+  @@schema("identity")
+}
+
+/// identity.sessions — refresh-token rotation state (ADR-0011)
+model Session {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  refreshTokenHash String    @map("refresh_token_hash") @db.Text // SHA-256
+  deviceLabel      String?   @map("device_label") @db.Text
+  ip               String?   @db.Inet
+  userAgent        String?   @map("user_agent") @db.Text
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt        DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  // ix_sessions_user_active partial index lives in migration raw SQL
+  @@index([expiresAt], map: "ix_sessions_expires")
+  @@map("sessions")
+  @@schema("identity")
+}
+
+/// identity.staff_memberships — staff user ↔ clinic employment metadata
+model StaffMembership {
+  id        String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String    @unique(map: "uq_staff_memberships_user") @map("user_id") @db.Uuid
+  jobTitle  String?   @map("job_title") @db.Text
+  published Boolean   @default(true)
+  startsOn  DateTime? @map("starts_on") @db.Date
+  endsOn    DateTime? @map("ends_on") @db.Date
+  createdAt DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("staff_memberships")
+  @@schema("identity")
+}
+
+// ---------------------------------------------------------------------------
+// Schema: content (data-model/clinic-content.md)
+// ---------------------------------------------------------------------------
+
+/// content.clinics — single-clinic profile row
+model Clinic {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String   @db.Text
+  slug             String   @unique(map: "uq_clinics_slug") @db.Text
+  addressLine1     String   @map("address_line1") @db.Text
+  addressLine2     String?  @map("address_line2") @db.Text
+  city             String   @db.Text
+  region           String?  @db.Text
+  postalCode       String?  @map("postal_code") @db.Text
+  country          String   @db.Text // ISO 3166-1 alpha-2
+  latitude         Decimal? @db.Decimal(9, 6)
+  longitude        Decimal? @db.Decimal(9, 6)
+  mainPhone        String   @map("main_phone") @db.Text // E.164
+  emergencyPhone   String   @map("emergency_phone") @db.Text // E.164; never hidden
+  whatsappDisplay  String?  @map("whatsapp_display") @db.Text
+  timezone         String   @db.Text // IANA
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  services      Service[]
+  businessHours BusinessHour[]
+  holidayHours  HolidayHour[]
+
+  @@map("clinics")
+  @@schema("content")
+}
+
+/// content.services — public service catalog with display-only pricing
+model Service {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId            String   @map("clinic_id") @db.Uuid
+  name                String   @db.Text
+  slug                String   @unique(map: "uq_services_slug") @db.Text
+  summary             String   @db.Text
+  descriptionMd       String?  @map("description_md") @db.Text
+  baselinePrice       Decimal? @map("baseline_price") @db.Decimal(10, 2)
+  currency            String?  @db.Char(3) // ISO 4217
+  category            String   @db.Text // consultation | surgery | dentistry | vaccination | grooming
+  featured            Boolean  @default(false)
+  requiresAppointment Boolean  @map("requires_appointment") @default(false)
+  published           Boolean  @default(false)
+  sortOrder           Int      @default(0) @map("sort_order")
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  clinic Clinic @relation(fields: [clinicId], references: [id])
+
+  @@index([published, category, sortOrder], map: "ix_services_published_category")
+  @@map("services")
+  @@schema("content")
+}
+
+/// content.staff_profiles — public projection of staff (auth lives in identity)
+model StaffProfile {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId         String    @unique(map: "uq_staff_profiles_user") @map("user_id") @db.Uuid // cross-schema → identity.users.id
+  displayName    String    @map("display_name") @db.Text
+  title          String    @db.Text // e.g. Dr., Veterinary Nurse
+  credentials    String[]  @db.Text
+  accreditations String[] @db.Text
+  bioMd          String?   @map("bio_md") @db.Text
+  photoObjectKey String?   @map("photo_object_key") @db.Text
+  specialisms    String[] @db.Text
+  published      Boolean   @default(false)
+  sortOrder      Int       @default(0) @map("sort_order")
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@index([published, sortOrder], map: "ix_staff_profiles_published")
+  @@map("staff_profiles")
+  @@schema("content")
+}
+
+/// content.business_hours — weekly standard hours (clinic-local time)
+model BusinessHour {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId  String   @map("clinic_id") @db.Uuid
+  weekday   Int      @db.SmallInt // 0=Sunday … 6=Saturday
+  opensAt   DateTime @map("opens_at") @db.Time(6)
+  closesAt  DateTime @map("closes_at") @db.Time(6)
+  closed    Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  clinic Clinic @relation(fields: [clinicId], references: [id])
+
+  @@unique([clinicId, weekday], map: "uq_business_hours_day")
+  @@map("business_hours")
+  @@schema("content")
+}
+
+/// content.holiday_hours — holiday overrides (win over business_hours)
+model HolidayHour {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clinicId   String   @map("clinic_id") @db.Uuid
+  holidayDate DateTime @map("holiday_date") @db.Date
+  opensAt    DateTime? @map("opens_at") @db.Time(6)
+  closesAt   DateTime? @map("closes_at") @db.Time(6)
+  closed     Boolean   @default(true)
+  label      String?  @db.Text
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  clinic Clinic @relation(fields: [clinicId], references: [id])
+
+  @@unique([clinicId, holidayDate], map: "uq_holiday_hours_date")
+  @@map("holiday_hours")
+  @@schema("content")
+}
+
+/// content.information_pages — static pages (about, privacy, …)
+model InformationPage {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug           String   @unique(map: "uq_information_pages_slug") @db.Text
+  title          String   @db.Text
+  bodyMd         String   @map("body_md") @db.Text
+  seoTitle       String?  @map("seo_title") @db.Text
+  seoDescription String?  @map("seo_description") @db.Text
+  published      Boolean  @default(false)
+  updatedAt      DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("information_pages")
+  @@schema("content")
+}
+
+/// content.downloadable_documents — care documents served via signed URLs
+model DownloadableDocument {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  title       String   @db.Text
+  slug        String   @unique(map: "uq_downloadable_documents_slug") @db.Text
+  description String?  @db.Text
+  objectKey   String   @map("object_key") @db.Text
+  mimeType    String   @map("mime_type") @db.Text // application/pdf
+  byteSize    Int      @map("byte_size")
+  published   Boolean  @default(false)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("downloadable_documents")
+  @@schema("content")
+}
+
+// ---------------------------------------------------------------------------
+// Schema: publishing (data-model/publishing.md)
+// ---------------------------------------------------------------------------
+
+/// publishing.articles — blog articles
+model Article {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug            String    @unique(map: "uq_articles_slug") @db.Text
+  title           String    @db.Text
+  excerpt         String?   @db.Text
+  bodyMd          String    @map("body_md") @db.Text
+  coverObjectKey  String?   @map("cover_object_key") @db.Text
+  status          String    @default("draft") @db.Text // draft | published | archived
+  categoryId      String?   @map("category_id") @db.Uuid
+  authorProfileId String?   @map("author_profile_id") @db.Uuid // cross-schema → content.staff_profiles.id
+  publishedAt     DateTime? @map("published_at") @db.Timestamptz
+  seoMetadataId   String?   @map("seo_metadata_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  category   Category?  @relation(fields: [categoryId], references: [id])
+  seoMetadata SeoMetadata? @relation(fields: [seoMetadataId], references: [id])
+  tags       ArticleTag[]
+  relationsFrom ArticleRelation[] @relation("ArticleRelationFrom")
+  relationsTo   ArticleRelation[] @relation("ArticleRelationTo")
+
+  @@index([status, publishedAt(sort: Desc)], map: "ix_articles_status_published")
+  @@index([categoryId, status], map: "ix_articles_category")
+  @@map("articles")
+  @@schema("publishing")
+}
+
+/// publishing.categories — staff-managed article categories
+model Category {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.Text
+  slug        String   @unique(map: "uq_categories_slug") @db.Text
+  description String?  @db.Text
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  articles Article[]
+
+  @@map("categories")
+  @@schema("publishing")
+}
+
+/// publishing.tags — staff-managed tags
+model Tag {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name      String   @db.Text
+  slug      String   @unique(map: "uq_tags_slug") @db.Text
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  articles ArticleTag[]
+
+  @@map("tags")
+  @@schema("publishing")
+}
+
+/// publishing.article_tags — article↔tag join
+model ArticleTag {
+  articleId String @map("article_id") @db.Uuid
+  tagId     String @map("tag_id") @db.Uuid
+
+  article Article @relation(fields: [articleId], references: [id])
+  tag     Tag     @relation(fields: [tagId], references: [id])
+
+  @@id([articleId, tagId])
+  @@index([tagId], map: "ix_article_tags_tag")
+  @@map("article_tags")
+  @@schema("publishing")
+}
+
+/// publishing.seo_metadata — per-article SEO rows
+model SeoMetadata {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  metaTitle        String?  @map("meta_title") @db.Text
+  metaDescription  String?  @map("meta_description") @db.Text
+  canonicalPath    String?  @map("canonical_path") @db.Text
+  ogImageObjectKey String?  @map("og_image_object_key") @db.Text
+  noIndex          Boolean  @default(false) @map("no_index")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  articles Article[]
+
+  @@map("seo_metadata")
+  @@schema("publishing")
+}
+
+/// publishing.media_assets — embedded article media (object storage refs)
+model MediaAsset {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  objectKey   String   @unique(map: "uq_media_assets_object_key") @map("object_key") @db.Text
+  mimeType    String   @map("mime_type") @db.Text // image/jpeg | image/png | image/webp
+  byteSize    Int      @map("byte_size")
+  altText     String   @map("alt_text") @db.Text // required for a11y
+  widthPx     Int?     @map("width_px")
+  heightPx    Int?     @map("height_px")
+  uploadedBy  String?  @map("uploaded_by") @db.Uuid // cross-schema → staff user id
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("media_assets")
+  @@schema("publishing")
+}
+
+/// publishing.article_relations — related-article links
+model ArticleRelation {
+  articleId        String @map("article_id") @db.Uuid
+  relatedArticleId String @map("related_article_id") @db.Uuid
+  weight           Int    @default(0) @db.SmallInt
+
+  article        Article @relation("ArticleRelationFrom", fields: [articleId], references: [id])
+  relatedArticle Article @relation("ArticleRelationTo", fields: [relatedArticleId], references: [id])
+
+  @@id([articleId, relatedArticleId])
+  @@map("article_relations")
+  @@schema("publishing")
+}
+
+/// publishing.newsletter_subscribers — double opt-in subscribers
+model NewsletterSubscriber {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email       String    @unique(map: "uq_newsletter_subscribers_email") @db.Citext
+  status      String    @default("pending") @db.Text // pending | active | unsubscribed
+  consentedAt DateTime  @map("consented_at") @db.Timestamptz
+  confirmedAt DateTime? @map("confirmed_at") @db.Timestamptz
+  source      String?   @db.Text // footer | article
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("newsletter_subscribers")
+  @@schema("publishing")
+}
+
+// ---------------------------------------------------------------------------
+// Schema: intake (data-model/care-coordination.md)
+// ---------------------------------------------------------------------------
+
+/// intake.appointment_requests — owner booking requests (anonymous-capable)
+model AppointmentRequest {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId              String?   @map("user_id") @db.Uuid // cross-schema → identity.users.id
+  contactName         String    @map("contact_name") @db.Text
+  contactPhone        String    @map("contact_phone") @db.Text // E.164
+  contactEmail        String    @map("contact_email") @db.Citext
+  petName             String    @map("pet_name") @db.Text
+  petSpecies          String?   @map("pet_species") @db.Text // dog | cat | other
+  reason              String    @db.Text
+  preferredWindowStart DateTime? @map("preferred_window_start") @db.Timestamptz
+  preferredWindowEnd  DateTime? @map("preferred_window_end") @db.Timestamptz
+  urgency             String    @default("routine") @db.Text // routine | soon | urgent
+  status              String    @default("received") @db.Text // received | triaged | scheduled | declined | cancelled
+  idempotencyKey      String?   @unique(map: "uq_appointment_requests_idempotency") @map("idempotency_key") @db.Text
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  uploads HistoryUpload[]
+
+  @@index([status, createdAt(sort: Desc)], map: "ix_appointment_requests_status_created")
+  @@index([userId], map: "ix_appointment_requests_user")
+  @@map("appointment_requests")
+  @@schema("intake")
+}
+
+/// intake.intake_submissions — new-client onboarding payload
+model IntakeSubmission {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String?   @map("user_id") @db.Uuid // cross-schema
+  contactName       String    @map("contact_name") @db.Text
+  contactPhone      String    @map("contact_phone") @db.Text // E.164
+  contactEmail      String    @map("contact_email") @db.Citext
+  addressLine1      String?   @map("address_line1") @db.Text
+  addressLine2      String?   @map("address_line2") @db.Text
+  city              String?   @db.Text
+  postalCode        String?   @map("postal_code") @db.Text
+  country           String?   @db.Text // ISO 3166-1 alpha-2
+  existingClient    Boolean   @map("existing_client") @default(false)
+  preferredVetUserId String?  @map("preferred_vet_user_id") @db.Uuid // cross-schema → staff user
+  notes             String?   @db.Text
+  status            String    @default("received") @db.Text // received | in_review | accepted | rejected
+  idempotencyKey    String?   @unique(map: "uq_intake_submissions_idempotency") @map("idempotency_key") @db.Text
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  uploads HistoryUpload[]
+
+  @@index([status, createdAt(sort: Desc)], map: "ix_intake_submissions_status_created")
+  @@map("intake_submissions")
+  @@schema("intake")
+}
+
+/// intake.history_uploads — uploaded medical-history files (object storage refs)
+model HistoryUpload {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  appointmentRequestId String?  @map("appointment_request_id") @db.Uuid
+  intakeSubmissionId   String?  @map("intake_submission_id") @db.Uuid
+  objectKey            String   @map("object_key") @db.Text
+  originalFilename     String?  @map("original_filename") @db.Text
+  mimeType             String   @map("mime_type") @db.Text // application/pdf | image/jpeg
+  byteSize             Int      @map("byte_size") // ≤ 10 MB
+  uploadedByUserId     String?  @map("uploaded_by_user_id") @db.Uuid // cross-schema
+  status               String   @default("pending") @db.Text // pending | finalised | rejected
+  rejectionReason      String?  @map("rejection_reason") @db.Text
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  appointmentRequest AppointmentRequest? @relation(fields: [appointmentRequestId], references: [id])
+  intakeSubmission   IntakeSubmission?   @relation(fields: [intakeSubmissionId], references: [id])
+
+  @@index([appointmentRequestId], map: "ix_history_uploads_appointment")
+  @@index([intakeSubmissionId], map: "ix_history_uploads_intake")
+  @@map("history_uploads")
+  @@schema("intake")
+}
+
+/// intake.form_submission_alerts — alert routing state for arrived forms
+model FormSubmissionAlert {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  sourceType  String   @map("source_type") @db.Text // appointment_request | intake_submission
+  sourceId    String   @map("source_id") @db.Uuid // polymorphic; no FK
+  channel     String   @db.Text // admin_dashboard | email | whatsapp
+  destination String?  @db.Text
+  status      String   @default("queued") @db.Text // queued | delivered | failed
+  attempts    Int      @default(0) @db.SmallInt
+  lastError   String?  @map("last_error") @db.Text
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  deliveredAt DateTime? @map("delivered_at") @db.Timestamptz
+
+  @@map("form_submission_alerts")
+  @@schema("intake")
+}
+
+// ---------------------------------------------------------------------------
+// Schema: clients (data-model/client-patient-records.md)
+// ---------------------------------------------------------------------------
+
+/// clients.clients — owner relationship records
+model Client {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId           String?   @unique(map: "uq_clients_user") @map("user_id") @db.Uuid // cross-schema → identity.users.id
+  displayName      String    @map("display_name") @db.Text
+  email            String?   @db.Citext
+  phone            String    @db.Text // E.164
+  addressLine1     String?   @map("address_line1") @db.Text
+  addressLine2     String?   @map("address_line2") @db.Text
+  city             String?   @db.Text
+  postalCode       String?   @map("postal_code") @db.Text
+  country          String?   @db.Text
+  preferredContact String    @map("preferred_contact") @default("phone") @db.Text // phone | email | whatsapp
+  source           String    @db.Text // intake | walk_in | existing_import
+  status           String    @default("active") @db.Text // active | inactive | deleted
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  deletedAt        DateTime? @map("deleted_at") @db.Timestamptz
+
+  pets Pet[]
+
+  @@index([phone], map: "ix_clients_phone")
+  @@index([status], map: "ix_clients_status")
+  @@map("clients")
+  @@schema("clients")
+}
+
+/// clients.pets — patient profiles
+model Pet {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  clientId       String    @map("client_id") @db.Uuid
+  name           String    @db.Text
+  species        String    @db.Text // dog | cat | bird | rabbit | other
+  breed          String?   @db.Text
+  sex            String?   @db.Text // female | male | unknown
+  neutered       Boolean?  @db.Boolean
+  dateOfBirth    DateTime? @map("date_of_birth") @db.Date
+  weightKg       Decimal?  @map("weight_kg") @db.Decimal(6, 2)
+  microchipId    String?   @map("microchip_id") @db.Text
+  photoObjectKey String?   @map("photo_object_key") @db.Text
+  notes          String?   @db.Text
+  status         String    @default("active") @db.Text // active | deceased | deleted
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  client                Client                    @relation(fields: [clientId], references: [id])
+  medicalHistory        MedicalHistoryRecord[]
+  primaryVeterinarianLinks PrimaryVeterinarianLink[]
+
+  @@index([clientId, status], map: "ix_pets_client")
+  @@index([name], map: "ix_pets_name")
+  @@map("pets")
+  @@schema("clients")
+}
+
+/// clients.medical_history_records — clinical document references
+model MedicalHistoryRecord {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  petId            String   @map("pet_id") @db.Uuid
+  title            String   @db.Text
+  objectKey        String   @map("object_key") @db.Text
+  mimeType         String   @map("mime_type") @db.Text // application/pdf | image/jpeg
+  byteSize         Int      @map("byte_size")
+  source           String   @db.Text // owner_upload | staff_upload | import
+  uploadedByUserId String?  @map("uploaded_by_user_id") @db.Uuid // cross-schema
+  visitDate        DateTime? @map("visit_date") @db.Date
+  summary          String?  @db.Text
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  pet Pet @relation(fields: [petId], references: [id])
+
+  @@index([petId, createdAt(sort: Desc)], map: "ix_medical_history_records_pet")
+  @@map("medical_history_records")
+  @@schema("clients")
+}
+
+/// clients.primary_veterinarian_links — current/historical primary vet (one current per pet; partial unique in raw SQL)
+model PrimaryVeterinarianLink {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  petId              String   @map("pet_id") @db.Uuid
+  veterinarianUserId String   @map("veterinarian_user_id") @db.Uuid // cross-schema → staff user
+  effectiveFrom      DateTime @map("effective_from") @db.Date
+  effectiveTo        DateTime? @map("effective_to") @db.Date // null = current
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  pet Pet @relation(fields: [petId], references: [id])
+
+  @@map("primary_veterinarian_links")
+  @@schema("clients")
+}
+
+// ---------------------------------------------------------------------------
+// Schema: commerce (data-model/commerce.md)
+// ---------------------------------------------------------------------------
+
+/// commerce.product_categories — storefront categories
+model ProductCategory {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.Text
+  slug        String   @unique(map: "uq_product_categories_slug") @db.Text
+  description String?  @db.Text
+  sortOrder   Int      @default(0) @map("sort_order")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  products Product[]
+
+  @@map("product_categories")
+  @@schema("commerce")
+}
+
+/// commerce.products — seven product types (simple|variable|grouped|external|composite + is_virtual/is_downloadable flags)
+model Product {
+  id                   String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  categoryId           String   @map("category_id") @db.Uuid
+  name                 String   @db.Text
+  slug                 String   @unique(map: "uq_products_slug") @db.Text
+  summary              String   @db.Text
+  descriptionMd        String?  @map("description_md") @db.Text
+  productType          String   @map("product_type") @db.Text // simple | variable | grouped | external | composite
+  isVirtual            Boolean  @map("is_virtual") @default(false)
+  isDownloadable       Boolean  @map("is_downloadable") @default(false)
+  pricingMode          String?  @map("pricing_mode") @db.Text // composite only: fixed | sum
+  externalUrl          String?  @map("external_url") @db.Text // external only
+  buttonText           String?  @map("button_text") @db.Text // external only
+  requiresPrescription Boolean  @map("requires_prescription") @default(false)
+  requiresPetClaim     Boolean  @map("requires_pet_claim") @default(false)
+  published            Boolean  @default(false)
+  featured             Boolean  @default(false)
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  category       ProductCategory        @relation(fields: [categoryId], references: [id])
+  variants       ProductVariant[]
+  compositeSlots CompositeSlot[]        @relation("CompositeParent")
+  optionInSlots  CompositeSlotOption[]  @relation("CompositeCandidate")
+  groupedParent  GroupedMember[]        @relation("GroupedMembersParent")
+  groupedMember  GroupedMember[]        @relation("GroupedMembersChild")
+  downloadFiles  ProductDownloadFile[]
+  downloadGrants ProductDownloadGrant[]
+  facets         ProductFacet[]
+  cartItems      CartItem[]
+  cartComponents CartItemComponent[]    @relation("CartComponentProduct")
+  orderItems     OrderItem[]
+  orderComponents OrderItemComponent[]  @relation("OrderComponentProduct")
+  subscriptions  Subscription[]
+
+  @@index([published, categoryId, featured], map: "ix_products_catalog")
+  @@map("products")
+  @@schema("commerce")
+}
+
+/// commerce.product_variants — stock/SKU/price per variant (simple products carry one default variant)
+model ProductVariant {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId       String   @map("product_id") @db.Uuid
+  name            String   @db.Text
+  sku             String   @unique(map: "uq_product_variants_sku") @db.Text
+  price           Decimal  @db.Decimal(10, 2)
+  compareAtPrice  Decimal? @map("compare_at_price") @db.Decimal(10, 2)
+  currency        String   @db.Char(3) // ISO 4217
+  stockQuantity   Int      @map("stock_quantity") @default(0)
+  stockReserved   Int      @map("stock_reserved") @default(0)
+  weightGrams     Int?     @map("weight_grams") // null for virtual/downloadable
+  isDefault       Boolean  @map("is_default") @default(false)
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  product           Product                  @relation(fields: [productId], references: [id])
+  cartItems         CartItem[]
+  cartComponents    CartItemComponent[]
+  orderItems        OrderItem[]
+  orderComponents   OrderItemComponent[]
+  slotPinnedBy      CompositeSlotOption[]    @relation("PinnedVariant")
+  subscriptions     Subscription[]
+
+  @@index([productId, active], map: "ix_product_variants_product")
+  @@map("product_variants")
+  @@schema("commerce")
+}
+
+/// commerce.composite_slots — configurable slots of a composite product
+model CompositeSlot {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  compositeProductId String  @map("composite_product_id") @db.Uuid
+  name              String   @db.Text
+  description       String?  @db.Text
+  position          Int      @default(0)
+  minSelect         Int      @map("min_select") @default(0)
+  maxSelect         Int      @map("max_select") @default(1)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  product   Product                @relation("CompositeParent", fields: [compositeProductId], references: [id])
+  options   CompositeSlotOption[]
+  cartComponents CartItemComponent[]
+  orderComponents OrderItemComponent[]
+
+  @@index([compositeProductId, position], map: "ix_composite_slots_product")
+  @@map("composite_slots")
+  @@schema("commerce")
+}
+
+/// commerce.composite_slot_options — selectable options within a slot (simple/variable candidates only)
+model CompositeSlotOption {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slotId            String   @map("slot_id") @db.Uuid
+  productId         String   @map("product_id") @db.Uuid
+  componentVariantId String? @map("component_variant_id") @db.Uuid // pins a specific variant
+  quantity          Int      @default(1)
+  priceOverride     Decimal? @map("price_override") @db.Decimal(10, 2)
+  sortOrder         Int      @map("sort_order") @default(0)
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  slot             CompositeSlot  @relation(fields: [slotId], references: [id])
+  product          Product        @relation("CompositeCandidate", fields: [productId], references: [id])
+  pinnedVariant    ProductVariant? @relation("PinnedVariant", fields: [componentVariantId], references: [id])
+
+  @@unique([slotId, productId, componentVariantId], map: "uq_composite_slot_options")
+  @@index([productId], map: "ix_composite_slot_options_product")
+  @@map("composite_slot_options")
+  @@schema("commerce")
+}
+
+/// commerce.grouped_members — grouped product member links (members cart as normal lines)
+model GroupedMember {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  groupedProductId String  @map("grouped_product_id") @db.Uuid
+  memberProductId String   @map("member_product_id") @db.Uuid
+  sortOrder       Int      @map("sort_order") @default(0)
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  groupedProduct Product @relation("GroupedMembersParent", fields: [groupedProductId], references: [id])
+  memberProduct  Product @relation("GroupedMembersChild", fields: [memberProductId], references: [id])
+
+  @@unique([groupedProductId, memberProductId], map: "uq_grouped_members")
+  @@map("grouped_members")
+  @@schema("commerce")
+}
+
+/// commerce.product_download_files — downloadable file references (object storage)
+model ProductDownloadFile {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  productId     String   @map("product_id") @db.Uuid
+  fileName      String   @map("file_name") @db.Text
+  objectKey     String   @map("object_key") @db.Text
+  fileSizeBytes Int      @map("file_size_bytes")
+  mimeType      String   @map("mime_type") @db.Text
+  sortOrder     Int      @map("sort_order") @default(0)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  product Product @relation(fields: [productId], references: [id])
+
+  @@index([productId, sortOrder], map: "ix_product_download_files_product")
+  @@map("product_download_files")
+  @@schema("commerce")
+}
+
+/// commerce.product_download_grants — per-paid-line download entitlements
+model ProductDownloadGrant {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderItemId    String    @map("order_item_id") @db.Uuid
+  productId      String    @map("product_id") @db.Uuid
+  downloadsUsed  Int       @map("downloads_used") @default(0)
+  maxDownloads   Int?      @map("max_downloads") // null = unlimited
+  expiresAt      DateTime? @map("expires_at")
+  lastDownloadAt DateTime? @map("last_download_at") @db.Timestamptz
+  revokedAt      DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
+  product   Product   @relation(fields: [productId], references: [id])
+
+  @@unique([orderItemId, productId], map: "uq_product_download_grants")
+  // ix_product_download_grants_expiry partial index lives in migration raw SQL
+  @@map("product_download_grants")
+  @@schema("commerce")
+}
+
+/// commerce.catalog_facets — pet type / life stage / condition facets
+model CatalogFacet {
+  id        String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  facetType String @map("facet_type") @db.Text // pet_type | life_stage | health_condition
+  value     String @db.Text
+  slug      String @db.Text
+  sortOrder Int    @map("sort_order") @default(0)
+
+  products ProductFacet[]
+
+  @@unique([facetType, slug], map: "uq_catalog_facets_type_slug")
+  @@map("catalog_facets")
+  @@schema("commerce")
+}
+
+/// commerce.product_facets — product↔facet join
+model ProductFacet {
+  productId String @map("product_id") @db.Uuid
+  facetId   String @map("facet_id") @db.Uuid
+
+  product Product      @relation(fields: [productId], references: [id])
+  facet   CatalogFacet @relation(fields: [facetId], references: [id])
+
+  @@id([productId, facetId])
+  @@map("product_facets")
+  @@schema("commerce")
+}
+
+/// commerce.carts — one open cart per user (partial unique in raw SQL)
+model Cart {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid // cross-schema → identity.users.id
+  status    String   @default("open") @db.Text // open | converted | abandoned
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  items CartItem[]
+
+  // uq_carts_open_user partial unique lives in migration raw SQL
+  @@map("carts")
+  @@schema("commerce")
+}
+
+/// commerce.cart_items — cart lines; no price snapshots; external never enters
+model CartItem {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cartId    String   @map("cart_id") @db.Uuid
+  productId String   @map("product_id") @db.Uuid
+  variantId String?  @map("variant_id") @db.Uuid // null for sum-priced composite lines
+  quantity  Int
+  petId     String?  @map("pet_id") @db.Uuid // cross-schema → clients.pets.id (Rx claim)
+  addedAt   DateTime @default(now()) @map("added_at") @db.Timestamptz
+
+  cart       Cart                 @relation(fields: [cartId], references: [id])
+  product    Product              @relation(fields: [productId], references: [id])
+  variant    ProductVariant?      @relation(fields: [variantId], references: [id])
+  components CartItemComponent[]
+
+  @@unique([cartId, variantId, petId], map: "uq_cart_items_line")
+  @@index([cartId], map: "ix_cart_items_cart")
+  @@map("cart_items")
+  @@schema("commerce")
+}
+
+/// commerce.cart_item_components — composite selections on a cart line
+model CartItemComponent {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  cartItemId  String   @map("cart_item_id") @db.Uuid
+  slotId      String   @map("slot_id") @db.Uuid
+  productId   String   @map("product_id") @db.Uuid
+  variantId   String   @map("variant_id") @db.Uuid
+  quantity    Int
+  addedAt     DateTime @default(now()) @map("added_at") @db.Timestamptz
+
+  cartItem CartItem       @relation(fields: [cartItemId], references: [id])
+  slot     CompositeSlot  @relation(fields: [slotId], references: [id])
+  product  Product        @relation("CartComponentProduct", fields: [productId], references: [id])
+  variant  ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@unique([cartItemId, slotId, productId, variantId], map: "uq_cart_item_components")
+  @@map("cart_item_components")
+  @@schema("commerce")
+}
+
+/// commerce.orders — order lifecycle; Rx lines hold at awaiting_prescription until Pharmacy events
+model Order {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId            String    @map("user_id") @db.Uuid // cross-schema
+  clientId          String?   @map("client_id") @db.Uuid // cross-schema → clients.id
+  status            String    @default("pending_payment") @db.Text // pending_payment | awaiting_prescription | paid | fulfilling | fulfilled | cancelled | refunded
+  subtotal          Decimal   @db.Decimal(10, 2)
+  taxTotal          Decimal   @map("tax_total") @db.Decimal(10, 2)
+  shippingTotal     Decimal   @map("shipping_total") @db.Decimal(10, 2) // 0 for pickup and digital
+  grandTotal        Decimal   @map("grand_total") @db.Decimal(10, 2)
+  currency          String    @db.Char(3)
+  fulfilmentMethod  String    @map("fulfilment_method") @db.Text // ship | pickup | digital
+  shippingAddressJson Json?   @map("shipping_address_json")
+  idempotencyKey    String?   @unique(map: "uq_orders_idempotency") @map("idempotency_key") @db.Text
+  placedAt          DateTime  @map("placed_at") @db.Timestamptz
+  updatedAt         DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  items      OrderItem[]
+  fulfilments Fulfilment[]
+  payments   Payment[]
+
+  @@index([userId, placedAt(sort: Desc)], map: "ix_orders_user_placed")
+  @@index([status, placedAt(sort: Desc)], map: "ix_orders_status")
+  @@map("orders")
+  @@schema("commerce")
+}
+
+/// commerce.order_items — priced lines; one prescription_request_id per Rx line
+model OrderItem {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId               String   @map("order_id") @db.Uuid
+  productId             String   @map("product_id") @db.Uuid
+  variantId             String?  @map("variant_id") @db.Uuid // null for sum-priced composite lines
+  quantity              Int
+  unitPrice             Decimal  @map("unit_price") @db.Decimal(10, 2) // snapshot at placement
+  lineTotal             Decimal  @map("line_total") @db.Decimal(10, 2)
+  petId                 String?  @map("pet_id") @db.Uuid // cross-schema
+  prescriptionRequestId String?  @map("prescription_request_id") @db.Uuid // cross-schema → pharmacy.prescription_requests.id
+
+  order      Order          @relation(fields: [orderId], references: [id])
+  product    Product        @relation(fields: [productId], references: [id])
+  variant    ProductVariant? @relation(fields: [variantId], references: [id])
+  components OrderItemComponent[]
+  downloadGrants ProductDownloadGrant[]
+
+  @@index([orderId], map: "ix_order_items_order")
+  @@map("order_items")
+  @@schema("commerce")
+}
+
+/// commerce.order_item_components — composite selection snapshot (staff pick list)
+model OrderItemComponent {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderItemId String  @map("order_item_id") @db.Uuid
+  slotId     String   @map("slot_id") @db.Uuid
+  productId  String   @map("product_id") @db.Uuid
+  variantId  String   @map("variant_id") @db.Uuid
+  quantity   Int
+  unitPrice  Decimal  @map("unit_price") @db.Decimal(10, 2) // snapshot at placement
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  orderItem OrderItem       @relation(fields: [orderItemId], references: [id])
+  slot      CompositeSlot   @relation(fields: [slotId], references: [id])
+  product   Product         @relation("OrderComponentProduct", fields: [productId], references: [id])
+  variant   ProductVariant  @relation(fields: [variantId], references: [id])
+
+  @@index([orderItemId], map: "ix_order_item_components_item")
+  @@map("order_item_components")
+  @@schema("commerce")
+}
+
+/// commerce.fulfilments — one per order (v1 single-choice model)
+model Fulfilment {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId         String    @map("order_id") @db.Uuid
+  method          String    @db.Text // ship | pickup | digital
+  status          String    @default("pending") @db.Text // pending | ready | handed_over | shipped | delivered | cancelled
+  carrier         String?   @db.Text
+  trackingNumber  String?   @map("tracking_number") @db.Text
+  pickupCode      String?   @map("pickup_code") @db.Text
+  estimatedReadyAt DateTime? @map("estimated_ready_at") @db.Timestamptz
+  completedAt     DateTime? @map("completed_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@map("fulfilments")
+  @@schema("commerce")
+}
+
+/// commerce.payments — tokenised gateway references; never card data (ADR-0007)
+model Payment {
+  id                String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId           String    @map("order_id") @db.Uuid
+  gateway           String    @db.Text // stripe | paypal | mock
+  gatewayPaymentRef String    @map("gateway_payment_ref") @db.Text
+  status            String    @default("pending") @db.Text // pending | captured | failed | refunded | partially_refunded
+  amount            Decimal   @db.Decimal(10, 2)
+  currency          String    @db.Char(3)
+  failureCode       String?   @map("failure_code") @db.Text
+  idempotencyKey    String?   @map("idempotency_key") @db.Text
+  capturedAt        DateTime? @map("captured_at") @db.Timestamptz
+  createdAt         DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  order Order @relation(fields: [orderId], references: [id])
+
+  @@unique([gateway, gatewayPaymentRef], map: "uq_payments_gateway_ref")
+  @@index([orderId], map: "ix_payments_order")
+  @@map("payments")
+  @@schema("commerce")
+}
+
+/// commerce.subscriptions — auto-refill for physical simple/variable products only
+model Subscription {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @map("user_id") @db.Uuid // cross-schema
+  productId    String    @map("product_id") @db.Uuid
+  variantId    String    @map("variant_id") @db.Uuid
+  petId        String?   @map("pet_id") @db.Uuid // cross-schema (Rx auto-refill)
+  frequency    String    @db.Text // monthly | quarterly | …
+  status       String    @default("active") @db.Text // active | paused | cancelled
+  nextOrderAt  DateTime  @map("next_order_at") @db.Timestamptz
+  cancelReason String?   @map("cancel_reason") @db.Text
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  product Product        @relation(fields: [productId], references: [id])
+  variant ProductVariant @relation(fields: [variantId], references: [id])
+
+  @@index([status, nextOrderAt], map: "ix_subscriptions_due")
+  @@index([userId], map: "ix_subscriptions_user")
+  @@map("subscriptions")
+  @@schema("commerce")
+}
+
+// ---------------------------------------------------------------------------
+// Schema: pharmacy (data-model/pharmacy-authorisation.md)
+// ---------------------------------------------------------------------------
+
+/// pharmacy.prescription_requests — Rx authorisation lifecycle (append-only decisions; ADR-0012)
+model PrescriptionRequest {
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  orderId            String    @map("order_id") @db.Uuid // cross-schema → commerce.orders.id
+  orderItemIds       String[]  @map("order_item_ids") @db.Uuid // Rx lines this request covers
+  userId             String    @map("user_id") @db.Uuid // cross-schema → owner
+  petId              String    @map("pet_id") @db.Uuid // cross-schema → clients.pets.id
+  veterinarianUserId String    @map("veterinarian_user_id") @db.Uuid // cross-schema; denormalised for queue display
+  status             String    @default("pending") @db.Text // pending | approved | rejected | queried | cancelled
+  ownerNote          String?   @map("owner_note") @db.Text
+  requestedAt        DateTime  @default(now()) @map("requested_at") @db.Timestamptz
+  decidedAt          DateTime? @map("decided_at") @db.Timestamptz
+  decidedBy          String?   @map("decided_by") @db.Uuid // cross-schema → staff user
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  decisions    PrescriptionDecision[]
+  auditLog     RxAuditLog[]
+  associations PatientAssociation[]
+
+  @@index([status, requestedAt], map: "ix_rx_requests_queue")
+  @@index([orderId], map: "ix_rx_requests_order")
+  @@index([petId], map: "ix_rx_requests_pet")
+  @@map("prescription_requests")
+  @@schema("pharmacy")
+}
+
+/// pharmacy.prescription_decisions — insert-only decision rows (DB trigger blocks UPDATE/DELETE)
+model PrescriptionDecision {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prescriptionRequestId String   @map("prescription_request_id") @db.Uuid
+  decision              String   @db.Text // approve | reject | query
+  reasonCode            String?  @map("reason_code") @db.Text
+  reasonText            String?  @map("reason_text") @db.Text // required for reject/query
+  decidedBy             String   @map("decided_by") @db.Uuid // cross-schema → veterinarian staff user
+  decidedAt             DateTime @map("decided_at") @db.Timestamptz
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  request PrescriptionRequest @relation(fields: [prescriptionRequestId], references: [id])
+
+  @@index([prescriptionRequestId, decidedAt], map: "ix_rx_decisions_request")
+  @@map("prescription_decisions")
+  @@schema("pharmacy")
+}
+
+/// pharmacy.rx_audit_log — insert-only audit of every decision and privileged touch
+model RxAuditLog {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prescriptionRequestId String   @map("prescription_request_id") @db.Uuid
+  actorUserId           String   @map("actor_user_id") @db.Uuid // cross-schema
+  action                String   @db.Text // viewed | decision_recorded | queue_claimed | exported
+  detailJson            Json?    @map("detail_json")
+  requestId             String?  @map("request_id") @db.Text // API requestId correlation
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  request PrescriptionRequest @relation(fields: [prescriptionRequestId], references: [id])
+
+  @@index([prescriptionRequestId, createdAt], map: "ix_rx_audit_log_request")
+  @@map("rx_audit_log")
+  @@schema("pharmacy")
+}
+
+/// pharmacy.patient_associations — pet/vet context snapshots at decision time
+model PatientAssociation {
+  id                    String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  prescriptionRequestId String   @map("prescription_request_id") @db.Uuid
+  petId                 String   @map("pet_id") @db.Uuid // cross-schema
+  veterinarianUserId    String   @map("veterinarian_user_id") @db.Uuid // cross-schema
+  clientId              String?  @map("client_id") @db.Uuid // cross-schema
+  snapshotAt            DateTime @map("snapshot_at") @db.Timestamptz
+  createdAt             DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  request PrescriptionRequest @relation(fields: [prescriptionRequestId], references: [id])
+
+  @@map("patient_associations")
+  @@schema("pharmacy")
+}
+
+// ---------------------------------------------------------------------------
+// Schema: messaging (data-model/care-messaging.md)
+// ---------------------------------------------------------------------------
+
+/// messaging.conversations — WhatsApp threads (bot/handover state machine)
+model Conversation {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  waPhoneNumber  String    @map("wa_phone_number") @db.Text // clinic Business API number
+  contactPhone   String    @map("contact_phone") @db.Text // owner's WhatsApp number
+  contactName    String?   @map("contact_name") @db.Text
+  clientId       String?   @map("client_id") @db.Uuid // cross-schema → clients.id
+  userId         String?   @map("user_id") @db.Uuid // cross-schema
+  direction      String    @default("inbound") @db.Text // inbound | outbound
+  status         String    @default("bot_active") @db.Text // bot_active | awaiting_handover | human_active | closed | blocked
+  emergencyFlag  Boolean   @map("emergency_flag") @default(false)
+  lastInboundAt  DateTime  @map("last_inbound_at") @db.Timestamptz
+  lastOutboundAt DateTime? @map("last_outbound_at") @db.Timestamptz
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  messages    InboxMessage[]
+  menuStates  ConversationMenuState[]
+  handovers   HandoverSession[]
+
+  @@index([contactPhone, lastInboundAt(sort: Desc)], map: "ix_conversations_contact")
+  @@index([status, lastInboundAt], map: "ix_conversations_status")
+  @@index([emergencyFlag, status], map: "ix_conversations_emergency")
+  @@map("conversations")
+  @@schema("messaging")
+}
+
+/// messaging.inbox_messages — one chronological stream per conversation (dedup on provider id)
+model InboxMessage {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId   String   @map("conversation_id") @db.Uuid
+  providerMessageId String  @map("provider_message_id") @db.Text
+  direction        String   @db.Text // inbound | outbound
+  senderType       String   @map("sender_type") @db.Text // owner | bot | staff
+  senderUserId     String?  @map("sender_user_id") @db.Uuid // cross-schema (staff sends)
+  bodyText         String   @map("body_text") @db.Text
+  mediaObjectKey   String?  @map("media_object_key") @db.Text
+  mediaMime        String?  @map("media_mime") @db.Text
+  status           String   @default("received") @db.Text // received | sent | delivered | read | failed
+  dedupeKey        String   @unique(map: "uq_inbox_messages_dedupe") @map("dedupe_key") @db.Text
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+
+  @@index([conversationId, createdAt], map: "ix_inbox_messages_conversation")
+  @@map("inbox_messages")
+  @@schema("messaging")
+}
+
+/// messaging.bot_rules — keyword/panic/menu/fallback rules
+model BotRule {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name             String   @db.Text
+  kind             String   @db.Text // keyword | panic | menu_entry | fallback
+  keywords         String[] @db.Text // lowercased match set
+  priority         Int      @default(0) @db.SmallInt
+  responseTemplate String?  @map("response_template") @db.Text // must include phone fallback line
+  action           String   @db.Text // reply | escalate | menu_start
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("bot_rules")
+  @@schema("messaging")
+}
+
+/// messaging.menu_flows — numbered pre-screening menu definitions (versioned)
+model MenuFlow {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name           String   @db.Text
+  version        Int
+  definitionJson Json     @map("definition_json")
+  active         Boolean  @default(false)
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  menuStates ConversationMenuState[]
+
+  @@map("menu_flows")
+  @@schema("messaging")
+}
+
+/// messaging.conversation_menu_state — in-conversation menu progress
+model ConversationMenuState {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId String    @map("conversation_id") @db.Uuid
+  menuFlowId     String    @map("menu_flow_id") @db.Uuid
+  menuVersion    Int       @map("menu_version")
+  currentStep    String    @map("current_step") @db.Text
+  answersJson    Json      @map("answers_json")
+  startedAt      DateTime  @map("started_at") @db.Timestamptz
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz
+  abandonedAt    DateTime? @map("abandoned_at") @db.Timestamptz
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  menuFlow     MenuFlow     @relation(fields: [menuFlowId], references: [id])
+
+  @@map("conversation_menu_state")
+  @@schema("messaging")
+}
+
+/// messaging.handover_sessions — bot→human handover claims (first claim wins; partial index in raw SQL)
+model HandoverSession {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId      String    @map("conversation_id") @db.Uuid
+  requestedReason     String    @map("requested_reason") @db.Text // owner_request | panic | bot_unresolved | menu_complete
+  requestedAt         DateTime  @map("requested_at") @db.Timestamptz
+  claimedBy           String?   @map("claimed_by") @db.Uuid // cross-schema → staff user
+  claimedAt           DateTime? @map("claimed_at") @db.Timestamptz
+  status              String    @default("requested") @db.Text // requested | claimed | released | resolved
+  resolvedAt          DateTime? @map("resolved_at") @db.Timestamptz
+  appointmentRequestId String?  @map("appointment_request_id") @db.Uuid // cross-schema
+  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+
+  // ix_handover_open partial index lives in migration raw SQL
+  @@map("handover_sessions")
+  @@schema("messaging")
+}
+
+/// messaging.messaging_business_profiles — runtime copy of hours + away messages
+model MessagingBusinessProfile {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name          String   @db.Text
+  waPhoneNumber String   @unique(map: "uq_messaging_business_profiles_number") @map("wa_phone_number") @db.Text
+  timezone      String   @db.Text // IANA
+  awayMessage   String   @map("away_message") @db.Text // must include emergency phone
+  hoursJson     Json     @map("hours_json")
+  active        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("messaging_business_profiles")
+  @@schema("messaging")
+}
+
+// ---------------------------------------------------------------------------
+// Schema: notifications (data-model/notifications.md)
+// ---------------------------------------------------------------------------
+
+/// notifications.notifications — one delivery intent
+model Notification {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type             String    @db.Text // appointment_received | prescription_approved | order_paid | newsletter | alert_form | alert_escalation
+  subject          String    @db.Text
+  bodyText         String    @map("body_text") @db.Text
+  audience         String    @db.Text // owner | staff | public_subscriber
+  recipientUserId  String?   @map("recipient_user_id") @db.Uuid // cross-schema
+  recipientEmail   String?   @map("recipient_email") @db.Citext
+  recipientPhone   String?   @map("recipient_phone") @db.Text
+  sourceType       String    @map("source_type") @db.Text
+  sourceId         String    @map("source_id") @db.Uuid // polymorphic; no FK
+  priority         String    @default("normal") @db.Text // normal | high | critical
+  status           String    @default("pending") @db.Text // pending | partially_delivered | delivered | failed | suppressed
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  deliveredAt      DateTime? @map("delivered_at") @db.Timestamptz
+
+  attempts DeliveryAttempt[]
+
+  @@index([sourceType, sourceId], map: "ix_notifications_source")
+  // ix_notifications_pending partial index lives in migration raw SQL
+  @@index([recipientUserId, createdAt(sort: Desc)], map: "ix_notifications_recipient")
+  @@map("notifications")
+  @@schema("notifications")
+}
+
+/// notifications.delivery_channels — channel registry (secrets live in env only)
+model DeliveryChannel {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  code       String   @unique(map: "uq_delivery_channels_code") @db.Text // email | whatsapp_template | in_app_dashboard
+  adapter    String   @db.Text // outbound adapter binding name
+  active     Boolean  @default(true)
+  configJson Json?    @map("config_json") // non-secret config only
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  attempts DeliveryAttempt[]
+
+  @@map("delivery_channels")
+  @@schema("notifications")
+}
+
+/// notifications.delivery_attempts — bounded-retry delivery log
+model DeliveryAttempt {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  notificationId String    @map("notification_id") @db.Uuid
+  channelId      String    @map("channel_id") @db.Uuid
+  status         String    @default("queued") @db.Text // queued | sent | delivered | failed | bounced
+  providerRef    String?   @map("provider_ref") @db.Text
+  errorCode      String?   @map("error_code") @db.Text
+  errorMessage   String?   @map("error_message") @db.Text
+  attemptNumber  Int       @map("attempt_number") @default(1) @db.SmallInt
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz
+
+  notification Notification @relation(fields: [notificationId], references: [id])
+  channel      DeliveryChannel @relation(fields: [channelId], references: [id])
+
+  @@index([notificationId, createdAt], map: "ix_delivery_attempts_notification")
+  @@map("delivery_attempts")
+  @@schema("notifications")
+}
+
+/// notifications.alert_subscriptions — staff alert preferences
+model AlertSubscription {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  staffUserId String   @map("staff_user_id") @db.Uuid // cross-schema
+  alertType   String   @map("alert_type") @db.Text // form_submission | bot_escalation | rx_queue | payment_failure | backup_failure
+  channel     String   @db.Text // dashboard | email | whatsapp
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([staffUserId, alertType, channel], map: "uq_alert_subs")
+  @@map("alert_subscriptions")
+  @@schema("notifications")
+}
+
+// ---------------------------------------------------------------------------
+// Schema: operations (data-model/operations.md)
+// ---------------------------------------------------------------------------
+
+/// operations.dashboard_preferences — per-staff UI state
+model DashboardPreference {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  staffUserId     String   @unique(map: "uq_dashboard_prefs_user") @map("staff_user_id") @db.Uuid // cross-schema
+  preferencesJson Json     @map("preferences_json")
+  createdAt       DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("dashboard_preferences")
+  @@schema("operations")
+}
+
+/// operations.audit_log — platform-wide append-only audit (insert-only; trigger in raw SQL)
+model AuditLog {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId String   @map("actor_user_id") @db.Uuid // cross-schema
+  actorRole   String?  @map("actor_role") @db.Text
+  action      String   @db.Text // e.g. catalog.price_changed
+  entityType  String   @map("entity_type") @db.Text
+  entityId    String   @map("entity_id") @db.Uuid
+  beforeJson  Json?    @map("before_json") // redacted snapshot
+  afterJson   Json?    @map("after_json")
+  requestId   String?  @map("request_id") @db.Text
+  ipHash      String?  @map("ip_hash") @db.Text // salted hash; raw IPs not retained
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([actorUserId, createdAt(sort: Desc)], map: "ix_audit_log_actor_time")
+  @@index([entityType, entityId, createdAt(sort: Desc)], map: "ix_audit_log_entity")
+  @@index([action, createdAt(sort: Desc)], map: "ix_audit_log_action")
+  @@map("audit_log")
+  @@schema("operations")
+}
+
+// operations.dashboard_snapshots is deferred (no table) per data-model/operations.md;
+// creation requires an ADR touch in dashboard docs first.
