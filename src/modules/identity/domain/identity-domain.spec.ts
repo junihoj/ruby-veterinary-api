@@ -60,13 +60,19 @@ describe('identity/domain', () => {
       expect(permissionsForRoles(['veterinarian'])).toEqual(['rx:review']);
     });
 
+    it('maps practice_manager to ops + Rx review + catalog writes', () => {
+      expect(permissionsForRoles(['practice_manager']).sort()).toEqual(
+        ['catalog:write', 'ops:inbox', 'ops:read', 'rx:review'].sort(),
+      );
+    });
+
     it('accumulates additively across roles', () => {
       const permissions = permissionsForRoles([
         'receptionist',
         'practice_manager',
       ]);
       expect(permissions.sort()).toEqual(
-        ['ops:inbox', 'ops:read', 'rx:review'].sort(),
+        ['catalog:write', 'ops:inbox', 'ops:read', 'rx:review'].sort(),
       );
     });
 

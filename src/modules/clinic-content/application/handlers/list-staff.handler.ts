@@ -2,7 +2,7 @@
 import { ListStaffQuery } from '../queries/list-staff.query';
 import { StaffRepository } from '../../infrastructure/repositories/staff.repository';
 import { StaffProfileDto } from '../dto/clinic-content.dto';
-import { parseCursor } from '../pagination';
+import { parseCursor } from '../../../../shared/cross-cutting/pagination';
 import { PrefixedId } from '../../../../shared/kernel/domain/prefixed-id';
 
 @QueryHandler(ListStaffQuery)

@@ -41,12 +41,13 @@ function main(): void {
   const livePath = join(__dirname, '..', 'dist', 'openapi.json');
   const live = extractContract(loadSpec(livePath));
 
-  // The committed contract files for M2: auth.yaml + clinic-content.yaml.
-  // We compare against the live export only (the yaml files are the source
-  // of truth for descriptions; the export must contain every operation).
+  // The committed contract files: auth.yaml + clinic-content.yaml (M2) and
+  // commerce.yaml + webhooks.yaml (M3a). We compare against the live export
+  // only (the yaml files are the source of truth for descriptions; the
+  // export must contain every operation with contract-exact statuses).
   const expected = new Map<string, string[]>();
 
-  // Expected operations from the M2 contract (auth.yaml + clinic-content.yaml).
+  // Expected operations from the committed contract.
   const expectedOps: Array<[string, string, string[]]> = [
     // auth.yaml
     ['POST', '/auth/register', ['registerClient', '201', '400', '409', '429']],
@@ -62,6 +63,39 @@ function main(): void {
     ['GET', '/staff', ['listStaff', '200']],
     ['GET', '/documents', ['listDocuments', '200']],
     ['GET', '/documents/{id}', ['getDocumentDownload', '200', '404']],
+    // commerce.yaml (M3a money path — M3b ops: subscriptions, downloads)
+    ['GET', '/products', ['listProducts', '200']],
+    ['GET', '/products/{slug}', ['getProduct', '200', '404']],
+    ['GET', '/cart', ['getCart', '200', '401']],
+    ['POST', '/cart', ['ensureCart', '200', '401']],
+    ['DELETE', '/cart', ['clearCart', '204', '401']],
+    [
+      'POST',
+      '/cart/items',
+      ['addCartItem', '201', '400', '401', '409', '422'],
+    ],
+    ['PATCH', '/cart/items', ['updateCartItem', '200', '400', '401']],
+    ['DELETE', '/cart/items', ['removeCartItem', '204', '401']],
+    [
+      'POST',
+      '/checkout/quote',
+      ['checkoutQuote', '200', '400', '401', '422'],
+    ],
+    [
+      'POST',
+      '/checkout',
+      ['checkout', '201', '400', '401', '409', '422', '503'],
+    ],
+    ['GET', '/orders', ['listOrders', '200', '401']],
+    ['GET', '/orders/{id}', ['getOrder', '200', '401', '404']],
+    ['POST', '/admin/products', ['adminCreateProduct', '201', '401', '403']],
+    [
+      'PATCH',
+      '/admin/products/{id}',
+      ['adminUpdateProduct', '200', '401', '403', '404'],
+    ],
+    // webhooks.yaml (payments)
+    ['POST', '/webhooks/payments', ['receivePaymentWebhook', '200', '401']],
   ];
 
   for (const [method, path, values] of expectedOps) {

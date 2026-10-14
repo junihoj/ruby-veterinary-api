@@ -2,7 +2,7 @@
 import { ListServicesQuery } from '../queries/list-services.query';
 import { ServiceRepository } from '../../infrastructure/repositories/service.repository';
 import { ServiceSummaryDto } from '../dto/clinic-content.dto';
-import { parseCursor } from '../pagination';
+import { parseCursor } from '../../../../shared/cross-cutting/pagination';
 import { PrefixedId } from '../../../../shared/kernel/domain/prefixed-id';
 
 @QueryHandler(ListServicesQuery)

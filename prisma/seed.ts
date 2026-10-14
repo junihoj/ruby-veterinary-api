@@ -1,11 +1,17 @@
 import { PrismaPg } from '@prisma/adapter-pg';
+import * as argon2 from 'argon2';
 import { PrismaClient } from '../src/generated/prisma/client';
+import {
+  CATALOG_MANAGER_EMAIL,
+  CATALOG_MANAGER_PASSWORD,
+} from './seed-credentials';
 
 /**
  * Seed for baseline reference data (§12 M1). Idempotent — safe to re-run.
  *
  * Seeds:
  *  - identity.roles          additive role catalogue (ADR-0002)
+ *  - identity.users          the catalog manager (practice_manager, M3a)
  *  - content.clinics         the single-clinic profile row
  *  - content.business_hours  weekly opening hours (0=Sun … 6=Sat)
  *  - content.services        published service catalog (M2)
@@ -13,6 +19,10 @@ import { PrismaClient } from '../src/generated/prisma/client';
  *  - content.downloadable_documents  care documents (M2)
  *  - notifications.delivery_channels  email | whatsapp_template | in_app_dashboard
  *  - commerce.catalog_facets pet_type / life_stage / health_condition facets
+ *  - commerce.product_categories + products of every shape + variants,
+ *    grouped members, composite slots, facet links (M3a storefront)
+ *
+ * Re-seeding re-baselines variant stock so e2e runs are deterministic.
  *
  * Run with: pnpm db:seed
  */
@@ -316,6 +326,441 @@ async function main(): Promise<void> {
       });
     }
     console.log(`catalog_facets: upserted ${facetSeeds.length}`);
+
+    // --- commerce.product_categories (storefront filters) ---
+    const categorySeeds = [
+      {
+        name: 'Parasite Control',
+        slug: 'parasite-control',
+        description: 'Spot-ons, collars and sprays.',
+        sortOrder: 10,
+      },
+      {
+        name: 'Joint Care',
+        slug: 'joint-care',
+        description: 'Mobility support for dogs and cats.',
+        sortOrder: 20,
+      },
+      {
+        name: 'Pharmacy',
+        slug: 'pharmacy',
+        description: 'Prescription and partner-delivered items.',
+        sortOrder: 30,
+      },
+      {
+        name: 'Telehealth & Guides',
+        slug: 'services-and-guides',
+        description: 'Virtual consults and downloadable care guides.',
+        sortOrder: 40,
+      },
+      {
+        name: 'Bundles',
+        slug: 'bundles',
+        description: 'Grouped and configurable bundles.',
+        sortOrder: 50,
+      },
+    ];
+    for (const cat of categorySeeds) {
+      await prisma.productCategory.upsert({
+        where: { slug: cat.slug },
+        update: {
+          name: cat.name,
+          description: cat.description,
+          sortOrder: cat.sortOrder,
+        },
+        create: cat,
+      });
+    }
+    console.log(`product_categories: upserted ${categorySeeds.length}`);
+
+    // --- identity: catalog manager for admin flows (M3a) ---
+    // The only seeded account with a real password: practice_manager holds
+    // catalog:write, and the admin e2e logs in here. The password is hashed
+    // at seed runtime and shared with the e2e suite via seed-credentials.ts.
+    // Other seeded staff keep their placeholder hashes untouched.
+    await prisma.user.upsert({
+      where: { email: CATALOG_MANAGER_EMAIL },
+      update: { kind: 'staff', status: 'active' },
+      create: {
+        email: CATALOG_MANAGER_EMAIL,
+        passwordHash: await argon2.hash(CATALOG_MANAGER_PASSWORD),
+        displayName: 'Grace Okonjo',
+        kind: 'staff',
+        status: 'active',
+        roles: {
+          create: [
+            {
+              role: { connect: { code: 'practice_manager' } },
+              grantedAt: new Date(),
+            },
+          ],
+        },
+      },
+    });
+    console.log('users: ensured catalog manager (practice_manager)');
+
+    // --- commerce.products: one product of every shape (M3a storefront) ---
+    // Shapes covered: simple, variable, grouped, external, composite, plus
+    // is_virtual and is_downloadable flags; an Rx simple covers the 422 path.
+    interface SeedVariant {
+      name: string;
+      sku: string;
+      price: number;
+      stock: number;
+      isDefault?: boolean;
+      weightGrams?: number | null;
+    }
+    interface SeedSlotOption {
+      productSlug: string;
+      componentVariantSku?: string;
+      quantity: number;
+      priceOverride?: number;
+      sortOrder: number;
+    }
+    interface SeedSlot {
+      name: string;
+      description?: string;
+      position: number;
+      minSelect: number;
+      maxSelect: number;
+      options: SeedSlotOption[];
+    }
+    interface SeedProduct {
+      slug: string;
+      categorySlug: string;
+      name: string;
+      summary: string;
+      productType: string;
+      descriptionMd?: string;
+      featured?: boolean;
+      isVirtual?: boolean;
+      isDownloadable?: boolean;
+      requiresPrescription?: boolean;
+      pricingMode?: string;
+      externalUrl?: string;
+      buttonText?: string;
+      variants: SeedVariant[];
+      members?: Array<{ slug: string; sortOrder: number }>;
+      slots?: SeedSlot[];
+      facets?: Array<{ facetType: string; slug: string }>;
+    }
+
+    const productSeeds: SeedProduct[] = [
+      {
+        slug: 'flea-tick-spot-on',
+        categorySlug: 'parasite-control',
+        name: 'Flea & Tick Spot-On',
+        summary: 'Monthly spot-on protection against fleas and ticks.',
+        descriptionMd: 'One pipette, once a month. Waterproof after 24h.',
+        productType: 'simple',
+        featured: true,
+        variants: [
+          {
+            name: 'Single pipette',
+            sku: 'SKU-FLS-001',
+            price: 12.5,
+            stock: 40,
+            isDefault: true,
+            weightGrams: 40,
+          },
+        ],
+        facets: [{ facetType: 'pet_type', slug: 'dog' }],
+      },
+      {
+        slug: 'joint-care-chews',
+        categorySlug: 'joint-care',
+        name: 'Joint Care Chews',
+        summary: 'Glucosamine soft chews for everyday mobility support.',
+        descriptionMd: 'Daily soft chew with glucosamine and green-lipped mussel.',
+        productType: 'variable',
+        variants: [
+          {
+            name: 'Small dog (up to 15 kg)',
+            sku: 'SKU-JCC-S',
+            price: 15.0,
+            stock: 25,
+            isDefault: true,
+            weightGrams: 180,
+          },
+          {
+            name: 'Large dog (over 15 kg)',
+            sku: 'SKU-JCC-L',
+            price: 24.0,
+            stock: 15,
+            weightGrams: 420,
+          },
+        ],
+        facets: [
+          { facetType: 'pet_type', slug: 'dog' },
+          { facetType: 'health_condition', slug: 'joint-support' },
+        ],
+      },
+      {
+        slug: 'antibiotic-oral-suspension',
+        categorySlug: 'pharmacy',
+        name: 'Antibiotic Oral Suspension',
+        summary: 'Prescription-only antibiotic suspension for dogs and cats.',
+        descriptionMd: 'Dispensed after veterinary authorisation (Rx hold).',
+        productType: 'simple',
+        requiresPrescription: true,
+        variants: [
+          {
+            name: '100 ml bottle',
+            sku: 'SKU-ABX-100',
+            price: 18.0,
+            stock: 20,
+            isDefault: true,
+            weightGrams: 160,
+          },
+        ],
+        facets: [
+          { facetType: 'pet_type', slug: 'dog' },
+          { facetType: 'pet_type', slug: 'cat' },
+        ],
+      },
+      {
+        slug: 'telehealth-triage',
+        categorySlug: 'services-and-guides',
+        name: 'Telehealth Triage Add-On',
+        summary: 'Virtual nurse triage before your appointment.',
+        productType: 'simple',
+        isVirtual: true,
+        variants: [
+          {
+            name: '30-minute video consult',
+            sku: 'SKU-TELE-30',
+            price: 25.0,
+            stock: 100,
+            isDefault: true,
+            weightGrams: null,
+          },
+        ],
+      },
+      {
+        slug: 'puppy-training-guide',
+        categorySlug: 'services-and-guides',
+        name: 'Puppy Training Guide',
+        summary: 'Downloadable 30-page guide to the first weeks at home.',
+        productType: 'simple',
+        isVirtual: true,
+        isDownloadable: true,
+        variants: [
+          {
+            name: 'PDF download',
+            sku: 'SKU-GUIDE-PUP',
+            price: 6.0,
+            stock: 999,
+            isDefault: true,
+            weightGrams: null,
+          },
+        ],
+        facets: [{ facetType: 'life_stage', slug: 'puppy-kitten' }],
+      },
+      {
+        slug: 'partner-diet-delivery',
+        categorySlug: 'pharmacy',
+        name: 'Renal Diet Delivery (Partner)',
+        summary: 'Therapeutic diet fulfilled by our partner — leaves this site.',
+        productType: 'external',
+        externalUrl: 'https://partner.example.com/renal-diet',
+        buttonText: 'Order from partner',
+        variants: [],
+      },
+      {
+        slug: 'puppy-starter-bundle',
+        categorySlug: 'bundles',
+        name: 'Puppy Starter Bundle',
+        summary: 'Spot-on cover and the training guide, listed together.',
+        descriptionMd: 'Members are added to the cart as normal lines.',
+        productType: 'grouped',
+        variants: [],
+        members: [
+          { slug: 'flea-tick-spot-on', sortOrder: 10 },
+          { slug: 'puppy-training-guide', sortOrder: 20 },
+        ],
+      },
+      {
+        slug: 'wellness-box',
+        categorySlug: 'bundles',
+        name: 'Monthly Wellness Box',
+        summary: 'Configurable box — pick a chew and an optional guide.',
+        descriptionMd: 'Composite product; purchasing lands in M3b.',
+        productType: 'composite',
+        pricingMode: 'fixed',
+        variants: [],
+        slots: [
+          {
+            name: 'Choose your chew',
+            description: 'One chew type per box.',
+            position: 10,
+            minSelect: 1,
+            maxSelect: 1,
+            options: [
+              {
+                productSlug: 'joint-care-chews',
+                componentVariantSku: 'SKU-JCC-S',
+                quantity: 1,
+                sortOrder: 10,
+              },
+            ],
+          },
+          {
+            name: 'Add a care guide',
+            description: 'Optional downloadable guide.',
+            position: 20,
+            minSelect: 0,
+            maxSelect: 1,
+            options: [
+              {
+                productSlug: 'puppy-training-guide',
+                quantity: 1,
+                priceOverride: 3.0,
+                sortOrder: 10,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+
+    for (const p of productSeeds) {
+      const category = await prisma.productCategory.findUnique({
+        where: { slug: p.categorySlug },
+      });
+      if (!category) {
+        throw new Error(`seed: missing category "${p.categorySlug}"`);
+      }
+
+      const productFields = {
+        name: p.name,
+        summary: p.summary,
+        descriptionMd: p.descriptionMd ?? null,
+        productType: p.productType,
+        isVirtual: p.isVirtual ?? false,
+        isDownloadable: p.isDownloadable ?? false,
+        pricingMode: p.pricingMode ?? null,
+        externalUrl: p.externalUrl ?? null,
+        buttonText: p.buttonText ?? null,
+        requiresPrescription: p.requiresPrescription ?? false,
+        published: true,
+        featured: p.featured ?? false,
+        categoryId: category.id,
+      };
+      const product = await prisma.product.upsert({
+        where: { slug: p.slug },
+        update: productFields,
+        create: { slug: p.slug, ...productFields },
+      });
+
+      for (const v of p.variants) {
+        await prisma.productVariant.upsert({
+          where: { sku: v.sku },
+          update: {
+            name: v.name,
+            price: v.price,
+            stockQuantity: v.stock,
+            stockReserved: 0,
+            isDefault: v.isDefault ?? false,
+            active: true,
+            weightGrams: v.weightGrams ?? null,
+          },
+          create: {
+            productId: product.id,
+            name: v.name,
+            sku: v.sku,
+            price: v.price,
+            currency: 'GBP',
+            stockQuantity: v.stock,
+            isDefault: v.isDefault ?? false,
+            weightGrams: v.weightGrams ?? null,
+          },
+        });
+      }
+
+      for (const member of p.members ?? []) {
+        const memberProduct = await prisma.product.findUnique({
+          where: { slug: member.slug },
+        });
+        if (!memberProduct) {
+          throw new Error(`seed: missing member "${member.slug}"`);
+        }
+        await prisma.groupedMember.upsert({
+          where: {
+            groupedProductId_memberProductId: {
+              groupedProductId: product.id,
+              memberProductId: memberProduct.id,
+            },
+          },
+          update: { sortOrder: member.sortOrder },
+          create: {
+            groupedProductId: product.id,
+            memberProductId: memberProduct.id,
+            sortOrder: member.sortOrder,
+          },
+        });
+      }
+
+      // Slots carry no natural key beyond their name — recreate each run.
+      // Options first: the FK from options to slots has no cascade.
+      if (p.slots?.length) {
+        await prisma.compositeSlotOption.deleteMany({
+          where: { slot: { compositeProductId: product.id } },
+        });
+        await prisma.compositeSlot.deleteMany({
+          where: { compositeProductId: product.id },
+        });
+        for (const slotSeed of p.slots) {
+          const slot = await prisma.compositeSlot.create({
+            data: {
+              compositeProductId: product.id,
+              name: slotSeed.name,
+              description: slotSeed.description ?? null,
+              position: slotSeed.position,
+              minSelect: slotSeed.minSelect,
+              maxSelect: slotSeed.maxSelect,
+            },
+          });
+          for (const optionSeed of slotSeed.options) {
+            const target = await prisma.product.findUnique({
+              where: { slug: optionSeed.productSlug },
+            });
+            if (!target) {
+              throw new Error(`seed: missing slot option "${optionSeed.productSlug}"`);
+            }
+            const pinned = optionSeed.componentVariantSku
+              ? await prisma.productVariant.findUnique({
+                  where: { sku: optionSeed.componentVariantSku },
+                })
+              : null;
+            await prisma.compositeSlotOption.create({
+              data: {
+                slotId: slot.id,
+                productId: target.id,
+                componentVariantId: pinned?.id ?? null,
+                quantity: optionSeed.quantity,
+                priceOverride: optionSeed.priceOverride ?? null,
+                sortOrder: optionSeed.sortOrder,
+              },
+            });
+          }
+        }
+      }
+
+      for (const f of p.facets ?? []) {
+        const facet = await prisma.catalogFacet.findUnique({
+          where: { facetType_slug: { facetType: f.facetType, slug: f.slug } },
+        });
+        if (!facet) continue; // non-fatal: facet may not exist in this baseline
+        await prisma.productFacet.upsert({
+          where: {
+            productId_facetId: { productId: product.id, facetId: facet.id },
+          },
+          update: {},
+          create: { productId: product.id, facetId: facet.id },
+        });
+      }
+    }
+    console.log(`products: upserted ${productSeeds.length}`);
 
     console.log('seed complete');
   } finally {

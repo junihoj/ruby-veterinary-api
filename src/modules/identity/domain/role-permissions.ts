@@ -9,7 +9,8 @@ export const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
   receptionist: ['ops:read'],
   veterinarian: ['rx:review'],
   vet_technician: [],
-  practice_manager: ['ops:read', 'ops:inbox', 'rx:review'],
+  // Catalog maintenance (commerce.yaml admin products; shop-manager parity).
+  practice_manager: ['ops:read', 'ops:inbox', 'rx:review', 'catalog:write'],
 } as const;
 
 export function permissionsForRoles(roles: readonly string[]): string[] {

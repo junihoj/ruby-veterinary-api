@@ -55,6 +55,12 @@ export class EnvVariables {
   @IsOptional()
   @IsString()
   S3_SECRET_KEY?: string;
+
+  // Shared secret for inbound payment webhooks (X-Provider-Signature HMAC).
+  // Optional like S3_*: the webhook endpoint fails closed (401) when unset.
+  @IsOptional()
+  @IsString()
+  PAYMENT_WEBHOOK_SECRET?: string;
 }
 
 export interface S3Config {
@@ -74,6 +80,7 @@ export interface AppConfig {
   swaggerEnabled: boolean;
   corsOrigins: string[];
   s3?: S3Config;
+  paymentWebhookSecret?: string;
 }
 
 export function buildAppConfig(env: EnvVariables): AppConfig {
@@ -99,6 +106,9 @@ export function buildAppConfig(env: EnvVariables): AppConfig {
       .map((origin) => origin.trim())
       .filter((origin) => origin.length > 0),
     ...(s3 ? { s3 } : {}),
+    ...(env.PAYMENT_WEBHOOK_SECRET
+      ? { paymentWebhookSecret: env.PAYMENT_WEBHOOK_SECRET }
+      : {}),
   });
 }
 

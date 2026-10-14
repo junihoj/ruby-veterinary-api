@@ -2,7 +2,7 @@
 import { ListDocumentsQuery } from '../queries/list-documents.query';
 import { DocumentRepository } from '../../infrastructure/repositories/document.repository';
 import { DocumentSummaryDto } from '../dto/clinic-content.dto';
-import { parseCursor } from '../pagination';
+import { parseCursor } from '../../../../shared/cross-cutting/pagination';
 import { PrefixedId } from '../../../../shared/kernel/domain/prefixed-id';
 
 @QueryHandler(ListDocumentsQuery)

@@ -1330,5 +1330,22 @@ model AuditLog {
   @@schema("operations")
 }
 
+/// operations.idempotency_keys — Idempotency-Key replay + inbound webhook dedupe (M3a)
+model IdempotencyKey {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  scope          String   @db.Text // e.g. checkout:<user uuid> | webhook:payments
+  key            String   @db.Text // Idempotency-Key header or provider event id
+  userId         String?  @map("user_id") @db.Uuid // cross-schema; null for webhooks
+  requestHash    String   @map("request_hash") @db.Text // sha256 of raw body
+  responseStatus Int      @map("response_status")
+  responseBody   Json?    @map("response_body") // original success body; null for webhook acks
+  createdAt      DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@unique([scope, key], map: "uq_idempotency_scope_key")
+  @@index([createdAt], map: "ix_idempotency_created")
+  @@map("idempotency_keys")
+  @@schema("operations")
+}
+
 // operations.dashboard_snapshots is deferred (no table) per data-model/operations.md;
 // creation requires an ADR touch in dashboard docs first.

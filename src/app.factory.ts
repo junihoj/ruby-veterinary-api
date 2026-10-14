@@ -14,7 +14,9 @@ import { EnvelopeInterceptor } from './shared/cross-cutting/envelope.interceptor
  * `bootstrap()` (no listener side effects during tests).
  */
 export async function createApp() {
-  const app = await NestFactory.create(AppModule);
+  // rawBody keeps the exact request bytes for the payments webhook
+  // signature (HMAC-SHA256) and idempotency request hashing (M3a).
+  const app = await NestFactory.create(AppModule, { rawBody: true });
 
   // Rule 5.1 — versioned base path.
   app.setGlobalPrefix('api/v1');
