@@ -6,6 +6,7 @@ import {
   PrismaHealthIndicator,
 } from '@nestjs/terminus';
 import { PrismaService } from '../../prisma/prisma.service';
+import { Public } from '../../shared/cross-cutting/decorators';
 
 /**
  * Liveness + readiness (§12 M1 exit criterion: "health endpoint on /api/v1").
@@ -13,6 +14,7 @@ import { PrismaService } from '../../prisma/prisma.service';
  * the process is up.
  */
 @ApiTags('health')
+@Public()
 @Controller('health')
 export class HealthController {
   constructor(

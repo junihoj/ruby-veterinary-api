@@ -30,14 +30,26 @@ export class EnvelopeInterceptor implements NestInterceptor {
 
     return next.handle().pipe(
       map((body: unknown) => {
-        // Already enveloped (e.g. a controller that set pagination) — pass through.
+        // Controller already set pagination (collections): merge the request
+        // correlation fields so `meta` always carries requestId + timestamp.
         if (
           body !== null &&
           typeof body === 'object' &&
           'data' in body &&
           'meta' in body
         ) {
-          return body;
+          const partial = body as {
+            data: unknown;
+            meta: Record<string, unknown>;
+          };
+          return {
+            data: partial.data,
+            meta: {
+              requestId,
+              timestamp: new Date().toISOString(),
+              ...partial.meta,
+            },
+          };
         }
         return envelope(body, requestId);
       }),

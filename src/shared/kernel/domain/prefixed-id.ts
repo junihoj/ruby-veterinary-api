@@ -13,7 +13,7 @@ export const ENTITY_PREFIXES = {
   session: 'ses',
   staffMembership: 'stm',
   clinic: 'cln',
-  service: 'srv',
+  service: 'svc',
   staffProfile: 'stf',
   informationPage: 'inf',
   document: 'doc',
@@ -78,6 +78,17 @@ export class PrefixedId {
     if (idx <= 0) return null;
     const uuid = prefixed.slice(idx + 1);
     return UUID_RE.test(uuid) ? uuid.toLowerCase() : null;
+  }
+
+  /**
+   * Accepts either a prefixed id (`doc_<uuid>`) or a bare UUID — used when
+   * reading an identifier back off the wire so both forms round-trip; null
+   * when the value is neither.
+   */
+  static tryAnyToUuid(raw: string): string | null {
+    const prefixed = PrefixedId.tryToUuid(raw);
+    if (prefixed !== null) return prefixed;
+    return UUID_RE.test(raw) ? raw.toLowerCase() : null;
   }
 
   /** True when the id carries the expected entity's prefix. */

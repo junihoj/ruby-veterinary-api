@@ -14,8 +14,9 @@ export interface ResponseMeta {
 }
 
 export interface PaginationMeta {
-  nextCursor?: string | null;
   limit?: number;
+  cursor?: string | null;
+  hasMore?: boolean;
   total?: number;
 }
 

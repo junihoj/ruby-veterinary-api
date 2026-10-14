@@ -1,9 +1,65 @@
 import { Injectable } from '@nestjs/common';
-import { ClinicContentFacadePort } from './clinic-content-facade-port';
+import { QueryBus } from '@nestjs/cqrs';
+import {
+  ClinicContentFacadePort,
+  PagedResult,
+} from './clinic-content-facade-port';
+import {
+  ClinicContactDto,
+  ClinicHoursDto,
+  DocumentDownloadDto,
+  DocumentSummaryDto,
+  ServiceDetailDto,
+  ServiceSummaryDto,
+  StaffProfileDto,
+} from '../dto/clinic-content.dto';
+import { GetClinicContactQuery } from '../queries/get-clinic-contact.query';
+import { GetClinicHoursQuery } from '../queries/get-clinic-hours.query';
+import { GetDocumentDownloadQuery } from '../queries/get-document-download.query';
+import { GetServiceQuery } from '../queries/get-service.query';
+import { ListDocumentsQuery } from '../queries/list-documents.query';
+import { ListServicesQuery } from '../queries/list-services.query';
+import { ListStaffQuery } from '../queries/list-staff.query';
 
 /**
- * Concrete facade for the ClinicContent context (§3). Body is bus delegation only —
- * no business logic. Methods are added alongside their handlers.
+ * Clinic Content facade (§3): thin delegation to the query bus. Handlers own
+ * the behaviour; the controller sees only this port.
  */
 @Injectable()
-export class ClinicContentFacade extends ClinicContentFacadePort {}
+export class ClinicContentFacade implements ClinicContentFacadePort {
+  constructor(private readonly queries: QueryBus) {}
+
+  getClinicHours(query: GetClinicHoursQuery): Promise<ClinicHoursDto> {
+    return this.queries.execute(query);
+  }
+
+  getClinicContact(query: GetClinicContactQuery): Promise<ClinicContactDto> {
+    return this.queries.execute(query);
+  }
+
+  listServices(
+    query: ListServicesQuery,
+  ): Promise<PagedResult<ServiceSummaryDto>> {
+    return this.queries.execute(query);
+  }
+
+  getService(query: GetServiceQuery): Promise<ServiceDetailDto> {
+    return this.queries.execute(query);
+  }
+
+  listStaff(query: ListStaffQuery): Promise<PagedResult<StaffProfileDto>> {
+    return this.queries.execute(query);
+  }
+
+  listDocuments(
+    query: ListDocumentsQuery,
+  ): Promise<PagedResult<DocumentSummaryDto>> {
+    return this.queries.execute(query);
+  }
+
+  getDocumentDownload(
+    query: GetDocumentDownloadQuery,
+  ): Promise<DocumentDownloadDto> {
+    return this.queries.execute(query);
+  }
+}

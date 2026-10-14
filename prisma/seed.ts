@@ -8,6 +8,9 @@ import { PrismaClient } from '../src/generated/prisma/client';
  *  - identity.roles          additive role catalogue (ADR-0002)
  *  - content.clinics         the single-clinic profile row
  *  - content.business_hours  weekly opening hours (0=Sun … 6=Sat)
+ *  - content.services        published service catalog (M2)
+ *  - content.staff_profiles  published staff grid (M2)
+ *  - content.downloadable_documents  care documents (M2)
  *  - notifications.delivery_channels  email | whatsapp_template | in_app_dashboard
  *  - commerce.catalog_facets pet_type / life_stage / health_condition facets
  *
@@ -113,6 +116,181 @@ async function main(): Promise<void> {
       });
     }
     console.log(`business_hours: upserted ${hours.length}`);
+
+    // --- content.services (published catalog for M2 public reads) ---
+    const serviceSeeds = [
+      {
+        name: 'Consultation',
+        slug: 'consultation',
+        summary: 'Standard veterinary consultation for your pet.',
+        descriptionMd: 'A full health assessment with one of our veterinarians.',
+        baselinePrice: 45.0,
+        currency: 'GBP',
+        category: 'consultation',
+        featured: true,
+        requiresAppointment: true,
+        published: true,
+        sortOrder: 0,
+      },
+      {
+        name: 'Vaccination',
+        slug: 'vaccination',
+        summary: 'Core vaccinations for dogs, cats, and rabbits.',
+        descriptionMd: 'Routine vaccination with health check.',
+        baselinePrice: 35.0,
+        currency: 'GBP',
+        category: 'vaccination',
+        featured: false,
+        requiresAppointment: true,
+        published: true,
+        sortOrder: 1,
+      },
+      {
+        name: 'Dental Cleaning',
+        slug: 'dental-cleaning',
+        summary: 'Scale and polish under anaesthetic.',
+        descriptionMd: 'Full dental procedure with pre-anaesthetic bloods.',
+        baselinePrice: 180.0,
+        currency: 'GBP',
+        category: 'dentistry',
+        featured: false,
+        requiresAppointment: true,
+        published: true,
+        sortOrder: 2,
+      },
+    ];
+    for (const svc of serviceSeeds) {
+      await prisma.service.upsert({
+        where: { slug: svc.slug },
+        update: {
+          name: svc.name,
+          summary: svc.summary,
+          descriptionMd: svc.descriptionMd,
+          baselinePrice: svc.baselinePrice,
+          currency: svc.currency,
+          category: svc.category,
+          featured: svc.featured,
+          requiresAppointment: svc.requiresAppointment,
+          published: svc.published,
+          sortOrder: svc.sortOrder,
+        },
+        create: { clinicId: clinic.id, ...svc },
+      });
+    }
+    console.log(`services: upserted ${serviceSeeds.length}`);
+
+    // --- content.staff_profiles (published grid for M2) ---
+    // Staff profiles link to identity users; create the users first.
+    const staffUsers = [
+      {
+        email: 'ada@ruby-veterinary.example.com',
+        displayName: 'Dr. Ada Lovelace',
+        kind: 'staff' as const,
+        roles: ['veterinarian'],
+      },
+      {
+        email: 'james@ruby-veterinary.example.com',
+        displayName: 'James Turing',
+        kind: 'staff' as const,
+        roles: ['vet_technician'],
+      },
+    ];
+    for (const su of staffUsers) {
+      await prisma.user.upsert({
+        where: { email: su.email },
+        update: { kind: 'staff', status: 'active' },
+        create: {
+          email: su.email,
+          passwordHash: '$argon2id$v=19$m=19456,t=2,p=1$seed$seed',
+          displayName: su.displayName,
+          kind: 'staff',
+          status: 'active',
+          roles: {
+            create: su.roles.map((code) => ({
+              role: { connect: { code } },
+              grantedAt: new Date(),
+            })),
+          },
+        },
+      });
+    }
+
+    const staffSeeds = [
+      {
+        email: 'ada@ruby-veterinary.example.com',
+        displayName: 'Dr. Ada Lovelace',
+        title: 'Veterinarian',
+        credentials: ['BVetMed'],
+        accreditations: ['RCVS'],
+        bioMd: 'Ada has a special interest in feline medicine.',
+        photoObjectKey: null,
+        specialisms: ['feline', 'internal-medicine'],
+        published: true,
+        sortOrder: 0,
+      },
+      {
+        email: 'james@ruby-veterinary.example.com',
+        displayName: 'James Turing',
+        title: 'Veterinary Nurse',
+        credentials: ['RVN'],
+        accreditations: [],
+        bioMd: 'James leads our nurse clinics.',
+        photoObjectKey: null,
+        specialisms: ['nutrition', 'weight-management'],
+        published: true,
+        sortOrder: 1,
+      },
+    ];
+    for (const staff of staffSeeds) {
+      const user = await prisma.user.findUnique({
+        where: { email: staff.email },
+      });
+      if (!user) continue;
+      const { email: _email, ...profile } = staff;
+      await prisma.staffProfile.upsert({
+        where: { userId: user.id },
+        update: profile,
+        create: { ...profile, userId: user.id },
+      });
+    }
+    console.log(`staff_profiles: upserted ${staffSeeds.length}`);
+
+    // --- content.downloadable_documents (care documents for M2) ---
+    const documentSeeds = [
+      {
+        title: 'Post-Operation Care Sheet',
+        slug: 'post-op-care',
+        description: 'What to expect after your pet\'s surgery.',
+        objectKey: 'documents/post-op-care.pdf',
+        mimeType: 'application/pdf',
+        byteSize: 24576,
+        published: true,
+      },
+      {
+        title: 'Boarding Waiver',
+        slug: 'boarding-waiver',
+        description: 'Required waiver for overnight stays.',
+        objectKey: 'documents/boarding-waiver.pdf',
+        mimeType: 'application/pdf',
+        byteSize: 12288,
+        published: true,
+      },
+    ];
+    for (const doc of documentSeeds) {
+      await prisma.downloadableDocument.upsert({
+        where: { slug: doc.slug },
+        update: {
+          title: doc.title,
+          description: doc.description,
+          objectKey: doc.objectKey,
+          mimeType: doc.mimeType,
+          byteSize: doc.byteSize,
+          published: doc.published,
+        },
+        create: doc,
+      });
+    }
+    console.log(`downloadable_documents: upserted ${documentSeeds.length}`);
 
     // --- notifications.delivery_channels ---
     for (const channel of DELIVERY_CHANNEL_SEED) {

@@ -1,4 +1,5 @@
 import { Global, Module } from '@nestjs/common';
+import 'dotenv/config'; // load .env before validating process.env
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 import {

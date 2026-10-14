@@ -1,7 +1,11 @@
 import { Module, MiddlewareConsumer, NestModule } from '@nestjs/common';
+import { APP_GUARD } from '@nestjs/core';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { ConfigModule } from './config/config.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { RequestIdMiddleware } from './shared/cross-cutting/request-id.middleware';
+import { AuthModule } from './shared/auth/auth.module';
+import { StorageModule } from './shared/storage/storage.module';
 import { HealthModule } from './modules/health/health.module';
 import { IdentityModule } from './modules/identity/identity.module';
 import { ClinicContentModule } from './modules/clinic-content/clinic-content.module';
@@ -23,6 +27,11 @@ import { OperationsModule } from './modules/operations/operations.module';
   imports: [
     ConfigModule,
     PrismaModule,
+    AuthModule,
+    StorageModule,
+    // Rate limits (api-specification.md §Rate Limits): public reads are
+    // 120 req/min per IP; auth routes tighten to 10 per 10 min with @Throttle.
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
     HealthModule,
     IdentityModule,
     ClinicContentModule,
@@ -35,6 +44,9 @@ import { OperationsModule } from './modules/operations/operations.module';
     NotificationsModule,
     OperationsModule,
   ],
+  // ThrottlerGuard is not auto-registered by ThrottlerModule (v6) — the 429
+  // contract (RATE_LIMITED + Retry-After) requires it as a global guard.
+  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {

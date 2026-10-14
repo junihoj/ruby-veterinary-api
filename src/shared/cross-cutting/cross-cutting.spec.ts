@@ -89,8 +89,8 @@ describe('shared/cross-cutting', () => {
     });
 
     it('includes pagination when supplied', () => {
-      const result = envelope([], 'req-1', { nextCursor: 'c2', limit: 20 });
-      expect(result.meta.pagination).toEqual({ nextCursor: 'c2', limit: 20 });
+      const result = envelope([], 'req-1', { cursor: 'c2', limit: 20 });
+      expect(result.meta.pagination).toEqual({ cursor: 'c2', limit: 20 });
     });
   });
 
@@ -112,7 +112,7 @@ describe('shared/cross-cutting', () => {
       });
     });
 
-    it('passes an already-enveloped body through untouched', (done) => {
+    it('merges requestId + timestamp into a controller-supplied meta', (done) => {
       const interceptor = new EnvelopeInterceptor();
       const alreadyEnveloped = { data: [1], meta: { requestId: 'req-9' } };
       const next = {
@@ -122,7 +122,13 @@ describe('shared/cross-cutting', () => {
       interceptor
         .intercept(httpContext({ requestId: 'req-9' }, {}), next)
         .subscribe((value) => {
-          expect(value).toBe(alreadyEnveloped);
+          const merged = value as {
+            data: unknown;
+            meta: { requestId: string; timestamp: string };
+          };
+          expect(merged.data).toBe(alreadyEnveloped.data);
+          expect(merged.meta.requestId).toBe('req-9');
+          expect(Number.isNaN(Date.parse(merged.meta.timestamp))).toBe(false);
           done();
         });
     });
