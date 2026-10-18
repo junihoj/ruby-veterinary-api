@@ -34,6 +34,11 @@ export function prescriptionPending(message: string): HttpException {
   );
 }
 
+/** 422 with a stable business-rule code (e.g. SUBSCRIPTION_NOT_AVAILABLE). */
+export function unprocessable(code: string, message: string): HttpException {
+  return new HttpException({ code, message }, HttpStatus.UNPROCESSABLE_ENTITY);
+}
+
 export function idempotencyConflict(message: string): HttpException {
   return new HttpException(
     { code: 'IDEMPOTENCY_CONFLICT', message },
@@ -45,5 +50,13 @@ export function dependencyUnavailable(message: string): HttpException {
   return new HttpException(
     { code: 'DEPENDENCY_UNAVAILABLE', message },
     HttpStatus.SERVICE_UNAVAILABLE,
+  );
+}
+
+/** 403 DOWNLOAD_NOT_AVAILABLE — grant revoked, expired, or exhausted. */
+export function downloadNotAvailable(message: string): HttpException {
+  return new HttpException(
+    { code: 'DOWNLOAD_NOT_AVAILABLE', message },
+    HttpStatus.FORBIDDEN,
   );
 }

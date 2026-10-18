@@ -38,6 +38,8 @@ export const ENTITY_PREFIXES = {
   compositeSlot: 'csl',
   compositeSlotOption: 'cso',
   subscription: 'sub',
+  downloadFile: 'dfl',
+  downloadGrant: 'dgr',
   prescriptionRequest: 'rx',
   prescriptionDecision: 'rxd',
   conversation: 'cvn',

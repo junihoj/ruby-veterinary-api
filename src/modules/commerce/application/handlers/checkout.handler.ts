@@ -14,14 +14,15 @@ import {
 } from '../../infrastructure/repositories/order.repository';
 import { assertCartLinesEligible } from '../cart-eligibility';
 import { CheckoutCommand } from '../commands/checkout.command';
-import { cartItemRows, toOrderDto } from '../dto/commerce.mapper';
+import { toOrderDto } from '../dto/commerce.mapper';
 import { OrderDto } from '../dto/commerce.responses.dto';
 import { badRequest, dependencyUnavailable, stockChanged } from '../errors';
 import {
   DuplicateOrderKeyError,
   StockConflictError,
 } from '../../infrastructure/errors';
-import { computeTotals, fromPence, toPence } from '../money';
+import { computeTotals, fromPence } from '../money';
+import { componentUnitPence, lineUnitPence } from '../line-pricing';
 
 const DEFAULT_PAYMENT_TOKEN = 'pm_mock_default';
 
@@ -39,13 +40,13 @@ export class CheckoutHandler implements ICommandHandler<CheckoutCommand> {
     if (!cart || cart.items.length === 0) {
       throw badRequest('Your cart is empty.');
     }
-    const items = cartItemRows(cart.items);
-    // 422 PRESCRIPTION_PENDING (Rx hold) / 400 (digital eligibility, M3b lines).
+    const items = cart.items;
+    // 422 PRESCRIPTION_PENDING (Rx hold) / 400 (digital eligibility).
     assertCartLinesEligible(items, command.input.fulfilmentMethod);
 
     const method = command.input.fulfilmentMethod;
     const lineTotalsPence = items.map(
-      (item) => toPence(item.variant.price.toString()) * item.quantity,
+      (item) => lineUnitPence(item) * item.quantity,
     );
     const totals = computeTotals(lineTotalsPence, method);
 
@@ -67,14 +68,22 @@ export class CheckoutHandler implements ICommandHandler<CheckoutCommand> {
     }
 
     const lines: PlaceOrderLine[] = items.map((item) => {
-      const unitPence = toPence(item.variant.price.toString());
+      const unitPence = lineUnitPence(item);
       return {
         productId: item.productId,
-        variantId: item.variantId as string, // asserted non-null above
+        // null for sum-priced composite lines (components carry the stock).
+        variantId: item.variantId,
         quantity: item.quantity,
         unitPrice: fromPence(unitPence),
         lineTotal: fromPence(unitPence * item.quantity),
         petId: item.petId,
+        components: item.components.map((component) => ({
+          slotId: component.slotId,
+          productId: component.productId,
+          variantId: component.variantId,
+          quantity: component.quantity,
+          unitPrice: fromPence(componentUnitPence(component)),
+        })),
       };
     });
 

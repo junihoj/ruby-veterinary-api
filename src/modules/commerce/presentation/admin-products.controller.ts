@@ -8,6 +8,7 @@ import {
   Post,
 } from '@nestjs/common';
 import {
+  ApiBadRequestResponse,
   ApiBearerAuth,
   ApiCreatedResponse,
   ApiForbiddenResponse,
@@ -23,13 +24,18 @@ import {
 } from '../../../shared/cross-cutting/decorators';
 import type { AuthUser } from '../../../shared/cross-cutting/decorators';
 import { AdminCreateProductCommand } from '../application/commands/admin-create-product.command';
+import { AdminCreateDownloadFileCommand } from '../application/commands/admin-create-download-file.command';
 import { AdminUpdateProductCommand } from '../application/commands/admin-update-product.command';
 import { CommerceFacadePort } from '../application/facades/commerce-facade-port';
 import {
+  AdminCreateDownloadFileDto,
   AdminCreateProductDto,
   AdminUpdateProductDto,
 } from '../application/dto/commerce.requests.dto';
-import { ProductDetailDto } from '../application/dto/commerce.responses.dto';
+import {
+  DownloadFileUploadDto,
+  ProductDetailDto,
+} from '../application/dto/commerce.responses.dto';
 
 /**
  * Admin catalog CRUD (commerce.yaml Catalog admin). `catalog:write` is held
@@ -82,6 +88,34 @@ export class AdminProductsController {
   ): Promise<ProductDetailDto> {
     return this.commerce.adminUpdateProduct(
       new AdminUpdateProductCommand(id, body),
+    );
+  }
+
+  @Post(':id/download-files')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({
+    operationId: 'adminCreateDownloadFile',
+    summary: 'Create a downloadable file record + presigned PUT upload URL',
+  })
+  @ApiCreatedResponse({
+    description:
+      'File record created; data carries the DownloadFile and a short-lived presigned PUT uploadUrl.',
+  })
+  @ApiBadRequestResponse({ description: 'VALIDATION_FAILED.' })
+  @ApiUnauthorizedResponse({
+    description: 'INVALID_CREDENTIALS or TOKEN_EXPIRED.',
+  })
+  @ApiForbiddenResponse({ description: 'STAFF_ONLY — missing catalog:write.' })
+  @ApiNotFoundResponse({
+    description: 'RESOURCE_NOT_FOUND — unknown product.',
+  })
+  createDownloadFile(
+    @CurrentUser() _user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: AdminCreateDownloadFileDto,
+  ): Promise<DownloadFileUploadDto> {
+    return this.commerce.adminCreateDownloadFile(
+      new AdminCreateDownloadFileCommand(id, body),
     );
   }
 }

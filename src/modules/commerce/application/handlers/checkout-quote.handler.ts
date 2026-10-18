@@ -2,10 +2,10 @@ import { IQueryHandler, QueryHandler } from '@nestjs/cqrs';
 import { PrefixedId } from '../../../../shared/kernel/domain/prefixed-id';
 import { CartRepository } from '../../infrastructure/repositories/cart.repository';
 import { assertCartLinesEligible } from '../cart-eligibility';
-import { cartItemRows } from '../dto/commerce.mapper';
+import { lineUnitPence } from '../line-pricing';
 import { QuoteDto, QuoteLineDto } from '../dto/commerce.responses.dto';
 import { badRequest } from '../errors';
-import { computeTotals, fromPence, toPence } from '../money';
+import { computeTotals, fromPence } from '../money';
 import { CheckoutQuoteQuery } from '../queries/checkout-quote.query';
 
 @QueryHandler(CheckoutQuoteQuery)
@@ -17,14 +17,17 @@ export class CheckoutQuoteHandler implements IQueryHandler<CheckoutQuoteQuery> {
     if (!cart || cart.items.length === 0) {
       throw badRequest('Your cart is empty.');
     }
-    const items = cartItemRows(cart.items);
-    // Throws 422 PRESCRIPTION_PENDING (Rx hold) or 400 (digital/variant rules).
-    assertCartLinesEligible(items, query.fulfilmentMethod);
+    // Throws 422 PRESCRIPTION_PENDING (Rx hold) or 400 (digital rules).
+    assertCartLinesEligible(cart.items, query.fulfilmentMethod);
 
-    const lines: QuoteLineDto[] = items.map((item) => {
-      const unitPence = toPence(item.variant.price.toString());
+    // Prices re-read live per line (plain variant, fixed parent variant, or
+    // the sum of a composite's selections — see line-pricing.ts).
+    const lines: QuoteLineDto[] = cart.items.map((item) => {
+      const unitPence = lineUnitPence(item);
       return {
-        variantId: PrefixedId.format('variant', item.variantId as string),
+        variantId: item.variantId
+          ? PrefixedId.format('variant', item.variantId)
+          : null,
         quantity: item.quantity,
         unitPrice: fromPence(unitPence),
         lineTotal: fromPence(unitPence * item.quantity),
@@ -32,9 +35,7 @@ export class CheckoutQuoteHandler implements IQueryHandler<CheckoutQuoteQuery> {
     });
 
     const totals = computeTotals(
-      items.map(
-        (item) => toPence(item.variant.price.toString()) * item.quantity,
-      ),
+      cart.items.map((item) => lineUnitPence(item) * item.quantity),
       query.fulfilmentMethod,
     );
 

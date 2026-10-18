@@ -61,6 +61,7 @@ describe('Commerce catalog, admin & cart (e2e)', () => {
   // Seeded fixtures resolved in beforeAll (fail fast when unseeded).
   let categoryId = '';
   let fleaVariantId = '';
+  let fleaProductId = '';
   let jointSmallVariantId = '';
   let rxVariantId = '';
   let telehealthVariantId = '';
@@ -98,6 +99,7 @@ describe('Commerce catalog, admin & cart (e2e)', () => {
     }
     categoryId = category.id;
     fleaVariantId = PrefixedId.format('variant', flea.id);
+    fleaProductId = PrefixedId.format('product', flea.productId);
     jointSmallVariantId = PrefixedId.format('variant', jointSmall.id);
     rxVariantId = PrefixedId.format('variant', rx.id);
     telehealthVariantId = PrefixedId.format('variant', telehealth.id);
@@ -163,12 +165,13 @@ describe('Commerce catalog, admin & cart (e2e)', () => {
     it('GET /products?petType=dog → the dog-facet products only', async () => {
       const res = await get('/products?petType=dog').expect(200);
       const body = res.body as PagedEnvelope<ProductSummaryDto>;
-      expect(body.data).toHaveLength(3);
+      expect(body.data).toHaveLength(4);
       expect(new Set(body.data.map((p) => p.slug))).toEqual(
         new Set([
           'flea-tick-spot-on',
           'joint-care-chews',
           'antibiotic-oral-suspension',
+          'daily-wellness-chews',
         ]),
       );
     });
@@ -188,7 +191,9 @@ describe('Commerce catalog, admin & cart (e2e)', () => {
     it('GET /products?category=joint-care → the category slug filter', async () => {
       const res = await get('/products?category=joint-care').expect(200);
       const body = res.body as PagedEnvelope<ProductSummaryDto>;
-      expect(body.data.map((p) => p.slug)).toEqual(['joint-care-chews']);
+      expect(new Set(body.data.map((p) => p.slug))).toEqual(
+        new Set(['joint-care-chews', 'daily-wellness-chews']),
+      );
     });
 
     it('GET /products?q=joint → name/summary search', async () => {
@@ -244,7 +249,9 @@ describe('Commerce catalog, admin & cart (e2e)', () => {
       const detail = (res.body as Envelope<ProductDetailDto>).data;
       expect(detail.productType).toBe('composite');
       expect(detail.pricingMode).toBe('fixed');
-      expect(detail.purchasable).toBe(false);
+      // M3b: a fixed composite is purchasable via its default variant.
+      expect(detail.purchasable).toBe(true);
+      expect(detail.fromPrice).toBe('27.00');
       expect(detail.slots).toHaveLength(2);
       expect(detail.slots[0].name).toBe('Choose your chew');
       expect(detail.slots[0].minSelect).toBe(1);
@@ -449,15 +456,28 @@ describe('Commerce catalog, admin & cart (e2e)', () => {
         .expect(400);
     });
 
-    it('answers 400 for composite components (M3b)', async () => {
+    it('answers 400 for a composite variant without its slot selections', async () => {
+      // wellness-box is a fixed composite; its default variant alone cannot
+      // identify the box's contents (M3b: selections drive stock and price).
+      const wellness = await get('/products/wellness-box').expect(200);
+      const boxVariantId = (
+        wellness.body as Envelope<ProductDetailDto>
+      ).data.variants.find((v) => v.isDefault)?.id as string;
+
+      const res = await post('/cart/items', shopperToken)
+        .send({ variantId: boxVariantId, quantity: 1 })
+        .expect(400);
+      expect((res.body as ErrorEnvelope).error.code).toBe('VALIDATION_FAILED');
+    });
+
+    it('answers 400 for components that name an unknown slot', async () => {
       const res = await post('/cart/items', shopperToken)
         .send({
-          variantId: jointSmallVariantId,
-          quantity: 1,
           components: [
             {
               slotId: 'csl_00000000-0000-4000-8000-000000000000',
-              variantId: jointSmallVariantId,
+              productId: fleaProductId,
+              variantId: fleaVariantId,
               quantity: 1,
             },
           ],

@@ -6,23 +6,42 @@ import { DuplicateOrderKeyError, StockConflictError } from '../errors';
 import { isUniqueViolation } from '../prisma-errors';
 
 const orderInclude = {
-  items: { include: { product: { select: { name: true } } } },
+  items: {
+    include: {
+      product: { select: { name: true } },
+      components: true,
+      downloadGrants: true,
+    },
+  },
   fulfilments: true,
   payments: true,
 } satisfies Prisma.OrderInclude;
 
-export interface PlaceOrderLine {
+export interface PlaceOrderComponent {
+  slotId: string;
   productId: string;
   variantId: string;
+  quantity: number;
+  /** Snapshot unit price (option price_override ?? variant price). */
+  unitPrice: string;
+}
+
+export interface PlaceOrderLine {
+  productId: string;
+  /** null for sum-priced composite lines. */
+  variantId: string | null;
   quantity: number;
   unitPrice: string;
   lineTotal: string;
   petId: string | null;
+  /** Composite selections: the components carry this line's stock. */
+  components?: PlaceOrderComponent[];
 }
 
 export interface PlaceOrderInput {
   userId: string;
-  cartId: string;
+  /** null for system-placed subscription auto-orders (no cart to convert). */
+  cartId: string | null;
   method: string;
   shippingAddress: ShippingAddressDto | null;
   totals: {
@@ -77,12 +96,27 @@ export class OrderRepository {
     try {
       return await this.prisma.$transaction(async (tx) => {
         for (const line of input.lines) {
-          const reserved = await tx.$executeRaw`
-            UPDATE commerce.product_variants
-               SET stock_reserved = stock_reserved + ${line.quantity}
-             WHERE id = ${line.variantId}::uuid
-               AND stock_quantity - stock_reserved >= ${line.quantity}`;
-          if (reserved === 0) throw new StockConflictError();
+          if (line.components?.length) {
+            // Composite lines reserve their components (commerce.md:
+            // "component stock reservation") — the line's own variant, when
+            // present, is only the fixed-price carrier and holds no stock.
+            for (const component of line.components) {
+              const units = component.quantity * line.quantity;
+              const reserved = await tx.$executeRaw`
+                UPDATE commerce.product_variants
+                   SET stock_reserved = stock_reserved + ${units}
+                 WHERE id = ${component.variantId}::uuid
+                   AND stock_quantity - stock_reserved >= ${units}`;
+              if (reserved === 0) throw new StockConflictError();
+            }
+          } else if (line.variantId) {
+            const reserved = await tx.$executeRaw`
+              UPDATE commerce.product_variants
+                 SET stock_reserved = stock_reserved + ${line.quantity}
+               WHERE id = ${line.variantId}::uuid
+                 AND stock_quantity - stock_reserved >= ${line.quantity}`;
+            if (reserved === 0) throw new StockConflictError();
+          }
         }
 
         const order = await tx.order.create({
@@ -104,7 +138,7 @@ export class OrderRepository {
         });
 
         for (const line of input.lines) {
-          await tx.orderItem.create({
+          const item = await tx.orderItem.create({
             data: {
               orderId: order.id,
               productId: line.productId,
@@ -115,6 +149,19 @@ export class OrderRepository {
               petId: line.petId ?? undefined,
             },
           });
+          if (line.components?.length) {
+            // Pick-list snapshot: what was in this box at placement.
+            await tx.orderItemComponent.createMany({
+              data: line.components.map((component) => ({
+                orderItemId: item.id,
+                slotId: component.slotId,
+                productId: component.productId,
+                variantId: component.variantId,
+                quantity: component.quantity,
+                unitPrice: component.unitPrice,
+              })),
+            });
+          }
         }
 
         await tx.fulfilment.create({
@@ -132,11 +179,17 @@ export class OrderRepository {
           },
         });
 
-        await tx.cart.update({
-          where: { id: input.cartId },
-          data: { status: 'converted' },
-        });
-        await tx.cartItem.deleteMany({ where: { cartId: input.cartId } });
+        if (input.cartId) {
+          // Components before items — their FK to cart_items has no cascade.
+          await tx.cartItemComponent.deleteMany({
+            where: { cartItem: { cartId: input.cartId } },
+          });
+          await tx.cart.update({
+            where: { id: input.cartId },
+            data: { status: 'converted' },
+          });
+          await tx.cartItem.deleteMany({ where: { cartId: input.cartId } });
+        }
         return order.id;
       });
     } catch (error) {

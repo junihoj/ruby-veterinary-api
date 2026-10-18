@@ -1,6 +1,6 @@
 import { PrefixedId } from '../../../../shared/kernel/domain/prefixed-id';
 import { CURRENCY, fromPence, toPence } from '../money';
-import { badRequest } from '../errors';
+import { lineUnitPence } from '../line-pricing';
 import { ShippingAddressDto } from './commerce.requests.dto';
 import {
   CartDto,
@@ -13,6 +13,7 @@ import {
   ProductFacetsDto,
   ProductSummaryDto,
   ProductVariantDto,
+  SubscriptionDto,
 } from './commerce.responses.dto';
 
 /**
@@ -91,9 +92,14 @@ export interface ProductDetailRow extends ProductRow {
   }>;
 }
 
-/** M3a purchasable shapes: composite (3b) and grouped/external never are. */
+/** Purchasable shapes: simple/variable and now composite (M3b); grouped and
+ *  external are never bought directly here. */
 function isPurchasable(productType: string): boolean {
-  return productType === 'simple' || productType === 'variable';
+  return (
+    productType === 'simple' ||
+    productType === 'variable' ||
+    productType === 'composite'
+  );
 }
 
 function fromPriceOf(variants: VariantRow[]): string | null {
@@ -213,66 +219,92 @@ export function toProductDetail(row: ProductDetailRow): ProductDetailDto {
   };
 }
 
+export interface CartComponentRow {
+  slotId: string;
+  productId: string;
+  variantId: string;
+  quantity: number;
+  variant: { name: string; price: DecimalLike; currency: string };
+  product: {
+    name: string;
+    slug: string;
+    requiresPrescription: boolean;
+    isVirtual: boolean;
+    isDownloadable: boolean;
+  };
+  /** For price_override lookup: (slot, product, pinned variant) identity. */
+  slot: {
+    options: Array<{
+      productId: string;
+      componentVariantId: string | null;
+      priceOverride: DecimalLike | null;
+    }>;
+  };
+}
+
 export interface CartItemRow {
   id: string;
   productId: string;
+  /** null for sum-priced composite lines (commerce.md cart_items). */
   variantId: string | null;
   quantity: number;
   petId: string | null;
   addedAt: DateLike;
+  /** Line's own variant — parent default variant on fixed composites. */
   variant: {
     name: string;
     price: DecimalLike;
     currency: string;
-    product: {
-      name: string;
-      slug: string;
-      productType: string;
-      requiresPrescription: boolean;
-      isVirtual: boolean;
-      isDownloadable: boolean;
-    };
+  } | null;
+  /** Product facts always read from the line's FK (composite lines may have
+   *  no variant, so `variant.product` alone cannot carry them). */
+  product: {
+    name: string;
+    slug: string;
+    productType: string;
+    pricingMode: string | null;
+    requiresPrescription: boolean;
+    isVirtual: boolean;
+    isDownloadable: boolean;
   };
+  /** Composite selections (empty for plain variant lines). */
+  components: CartComponentRow[];
 }
 
 /**
- * What Prisma actually returns (Cart.variant is optional in the schema).
- * M3a lines always carry a variant — composite lines are blocked at
- * add-to-cart — so the guard below keeps the invariant honest.
+ * What Prisma actually returns when the repositories apply the cart
+ * `include`s. Kept as an alias for call-site compatibility — both variant
+ * and non-variant (composite) lines are first-class in M3b.
  */
-export type CartItemRowLike = Omit<CartItemRow, 'variant'> & {
-  variant: CartItemRow['variant'] | null;
-};
+export type CartItemRowLike = CartItemRow;
 
-export function cartItemRows(items: CartItemRowLike[]): CartItemRow[] {
-  return items.map((item) => {
-    if (!item.variant) {
-      throw badRequest('Composite cart lines are not yet supported.');
-    }
-    return item as CartItemRow;
-  });
-}
-
-export function toCartItemDto(row: CartItemRowLike): CartItemDto {
-  const items = cartItemRows([row]);
-  const item = items[0];
-  const unitPence = toPence(item.variant.price.toString());
+export function toCartItemDto(item: CartItemRow): CartItemDto {
+  const unitPence = lineUnitPence(item);
+  const currency =
+    item.variant?.currency ?? item.components[0]?.variant.currency ?? CURRENCY;
   return {
     id: PrefixedId.format('cartItem', item.id),
     productId: PrefixedId.format('product', item.productId),
-    // M3a lines always carry a variant (composite lines are blocked until 3b).
-    variantId: PrefixedId.format('variant', item.variantId ?? item.id),
-    name: item.variant.product.name,
-    slug: item.variant.product.slug,
-    variantName: item.variant.name,
-    productType: item.variant.product.productType,
-    requiresPrescription: item.variant.product.requiresPrescription,
+    variantId: item.variantId
+      ? PrefixedId.format('variant', item.variantId)
+      : null,
+    name: item.product.name,
+    slug: item.product.slug,
+    variantName: item.variant ? item.variant.name : null,
+    productType: item.product.productType,
+    requiresPrescription: item.product.requiresPrescription,
     quantity: item.quantity,
     unitPrice: fromPence(unitPence),
     lineTotal: fromPence(unitPence * item.quantity),
-    currency: item.variant.currency,
+    currency,
     petId: item.petId,
     addedAt: item.addedAt.toISOString(),
+    components: item.components.map((component) => ({
+      slotId: PrefixedId.format('compositeSlot', component.slotId),
+      productId: PrefixedId.format('product', component.productId),
+      variantId: PrefixedId.format('variant', component.variantId),
+      quantity: component.quantity,
+    })),
   };
 }
 
@@ -325,6 +357,20 @@ export interface OrderRow {
     lineTotal: DecimalLike;
     petId: string | null;
     product: { name: string };
+    components: Array<{
+      slotId: string;
+      productId: string;
+      variantId: string;
+      quantity: number;
+    }>;
+    downloadGrants: Array<{
+      id: string;
+      productId: string;
+      downloadsUsed: number;
+      maxDownloads: number | null;
+      expiresAt: DateLike | null;
+      revokedAt: DateLike | null;
+    }>;
   }>;
   fulfilments: Array<{
     id: string;
@@ -360,6 +406,12 @@ export function toOrderDto(row: OrderRow): OrderDto {
     unitPrice: fromPence(toPence(item.unitPrice.toString())),
     lineTotal: fromPence(toPence(item.lineTotal.toString())),
     petId: item.petId,
+    components: item.components.map((component) => ({
+      slotId: PrefixedId.format('compositeSlot', component.slotId),
+      productId: PrefixedId.format('product', component.productId),
+      variantId: PrefixedId.format('variant', component.variantId),
+      quantity: component.quantity,
+    })),
   }));
 
   const fulfilmentRow = row.fulfilments[0];
@@ -413,5 +465,45 @@ export function toOrderDto(row: OrderRow): OrderDto {
     items,
     fulfilment,
     payment,
+    downloads: row.items.flatMap((item) =>
+      item.downloadGrants.map((grant) => ({
+        id: PrefixedId.format('downloadGrant', grant.id),
+        productId: PrefixedId.format('product', grant.productId),
+        downloadsUsed: grant.downloadsUsed,
+        maxDownloads: grant.maxDownloads,
+        expiresAt: grant.expiresAt ? grant.expiresAt.toISOString() : null,
+        revoked: grant.revokedAt !== null,
+      })),
+    ),
+  };
+}
+
+export interface SubscriptionRow {
+  id: string;
+  petId: string | null;
+  frequency: string;
+  status: string;
+  nextOrderAt: DateLike;
+  cancelReason: string | null;
+  createdAt: DateLike;
+  updatedAt: DateLike;
+  product: { id: string; name: string };
+  variant: { id: string; name: string };
+}
+
+export function toSubscriptionDto(row: SubscriptionRow): SubscriptionDto {
+  return {
+    id: PrefixedId.format('subscription', row.id),
+    productId: PrefixedId.format('product', row.product.id),
+    productName: row.product.name,
+    variantId: PrefixedId.format('variant', row.variant.id),
+    variantName: row.variant.name,
+    petId: row.petId,
+    frequency: row.frequency,
+    status: row.status,
+    nextOrderAt: row.nextOrderAt.toISOString(),
+    cancelReason: row.cancelReason,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
   };
 }

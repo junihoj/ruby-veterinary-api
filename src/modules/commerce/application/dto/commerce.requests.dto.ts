@@ -37,6 +37,9 @@ export class ComponentSelectionDto {
   slotId: string;
 
   @IsString()
+  productId: string;
+
+  @IsString()
   variantId: string;
 
   @IsInt()
@@ -44,10 +47,15 @@ export class ComponentSelectionDto {
   quantity: number;
 }
 
-/** POST /cart/items — composite components are rejected in M3a (see handler). */
+/**
+ * POST /cart/items — simple/variable/fixed-composite lines carry a
+ * variantId; sum-priced composite lines omit it (commerce.yaml: the
+ * product is then identified through components[].slotId).
+ */
 export class AddCartItemDto {
+  @IsOptional()
   @IsString()
-  variantId: string;
+  variantId?: string;
 
   @IsInt()
   @Min(1)
@@ -295,4 +303,50 @@ export class AdminUpdateProductDto {
   @IsOptional()
   @IsBoolean()
   variantActive?: boolean;
+}
+
+/** POST /subscriptions — physical simple/variable auto-refill only. */
+export const SUBSCRIPTION_FREQUENCIES = ['monthly', 'quarterly'] as const;
+export type SubscriptionFrequencyInput =
+  (typeof SUBSCRIPTION_FREQUENCIES)[number];
+
+export class CreateSubscriptionDto {
+  @IsString()
+  variantId: string;
+
+  @IsIn(SUBSCRIPTION_FREQUENCIES)
+  frequency: SubscriptionFrequencyInput;
+
+  @IsOptional()
+  @IsString()
+  petId?: string;
+}
+
+export const SUBSCRIPTION_STATUSES = ['active', 'paused', 'cancelled'] as const;
+export type SubscriptionStatusInput = (typeof SUBSCRIPTION_STATUSES)[number];
+
+/** PATCH /subscriptions/{id} — pause, resume, or cancel. */
+export class UpdateSubscriptionDto {
+  @IsIn(SUBSCRIPTION_STATUSES)
+  status: SubscriptionStatusInput;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(500)
+  cancelReason?: string;
+}
+
+/** POST /admin/products/{id}/download-files — presigned PUT upload. */
+export class AdminCreateDownloadFileDto {
+  @IsString()
+  @MaxLength(255)
+  fileName: string;
+
+  @IsInt()
+  @Min(1)
+  fileSizeBytes: number;
+
+  @IsString()
+  @MaxLength(120)
+  mimeType: string;
 }

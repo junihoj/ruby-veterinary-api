@@ -1,27 +1,38 @@
 import { AdminCreateProductCommand } from '../commands/admin-create-product.command';
 import { AdminUpdateProductCommand } from '../commands/admin-update-product.command';
+import { AdminCreateDownloadFileCommand } from '../commands/admin-create-download-file.command';
 import { AddCartItemCommand } from '../commands/add-cart-item.command';
+import { CancelSubscriptionCommand } from '../commands/cancel-subscription.command';
 import { CheckoutCommand } from '../commands/checkout.command';
 import { ClearCartCommand } from '../commands/clear-cart.command';
+import { CreateSubscriptionCommand } from '../commands/create-subscription.command';
 import { EnsureCartCommand } from '../commands/ensure-cart.command';
 import { HandlePaymentWebhookCommand } from '../commands/handle-payment-webhook.command';
+import { IssueDownloadUrlCommand } from '../commands/issue-download-url.command';
 import { RemoveCartItemCommand } from '../commands/remove-cart-item.command';
 import { UpdateCartItemCommand } from '../commands/update-cart-item.command';
+import { UpdateSubscriptionCommand } from '../commands/update-subscription.command';
 import {
   CartDto,
   CartItemDto,
+  DownloadFileGrantDto,
+  DownloadFileUploadDto,
+  DownloadUrlDto,
   OrderDto,
   PaymentWebhookAckDto,
   ProductDetailDto,
   ProductSummaryDto,
   QuoteDto,
+  SubscriptionDto,
 } from '../dto/commerce.responses.dto';
 import { CheckoutQuoteQuery } from '../queries/checkout-quote.query';
 import { GetCartQuery } from '../queries/get-cart.query';
 import { GetOrderQuery } from '../queries/get-order.query';
 import { GetProductQuery } from '../queries/get-product.query';
+import { ListOrderDownloadsQuery } from '../queries/list-order-downloads.query';
 import { ListOrdersQuery } from '../queries/list-orders.query';
 import { ListProductsQuery } from '../queries/list-products.query';
+import { ListSubscriptionsQuery } from '../queries/list-subscriptions.query';
 
 export interface PagedResult<T> {
   data: T[];
@@ -34,8 +45,9 @@ export interface PagedResult<T> {
  * this abstract port, bound to the concrete facade with `useExisting` (§3).
  *
  * M3a: catalog reads + admin CRUD, cart/quote/checkout, orders, payments
- * webhook (commerce.yaml + webhooks.yaml). Consumers today: none (pharmacy
- * authorisation arrives in Phase 5).
+ * webhook (commerce.yaml + webhooks.yaml). M3b adds composite cart lines,
+ * order downloads + signed URLs, subscriptions, and admin download-file
+ * uploads. Consumers today: none (pharmacy authorisation arrives in Phase 5).
  */
 export abstract class CommerceFacadePort {
   abstract listProducts(
@@ -52,12 +64,33 @@ export abstract class CommerceFacadePort {
   abstract checkout(command: CheckoutCommand): Promise<OrderDto>;
   abstract listOrders(query: ListOrdersQuery): Promise<PagedResult<OrderDto>>;
   abstract getOrder(query: GetOrderQuery): Promise<OrderDto>;
+  abstract listOrderDownloads(
+    query: ListOrderDownloadsQuery,
+  ): Promise<DownloadFileGrantDto[]>;
+  abstract issueDownloadUrl(
+    command: IssueDownloadUrlCommand,
+  ): Promise<DownloadUrlDto>;
+  abstract listSubscriptions(
+    query: ListSubscriptionsQuery,
+  ): Promise<SubscriptionDto[]>;
+  abstract createSubscription(
+    command: CreateSubscriptionCommand,
+  ): Promise<SubscriptionDto>;
+  abstract updateSubscription(
+    command: UpdateSubscriptionCommand,
+  ): Promise<SubscriptionDto>;
+  abstract cancelSubscription(
+    command: CancelSubscriptionCommand,
+  ): Promise<void>;
   abstract adminCreateProduct(
     command: AdminCreateProductCommand,
   ): Promise<ProductDetailDto>;
   abstract adminUpdateProduct(
     command: AdminUpdateProductCommand,
   ): Promise<ProductDetailDto>;
+  abstract adminCreateDownloadFile(
+    command: AdminCreateDownloadFileCommand,
+  ): Promise<DownloadFileUploadDto>;
   abstract handlePaymentWebhook(
     command: HandlePaymentWebhookCommand,
   ): Promise<PaymentWebhookAckDto>;

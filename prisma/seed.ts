@@ -1,3 +1,5 @@
+import 'dotenv/config';
+import { CreateBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { PrismaPg } from '@prisma/adapter-pg';
 import * as argon2 from 'argon2';
 import { PrismaClient } from '../src/generated/prisma/client';
@@ -21,8 +23,12 @@ import {
  *  - commerce.catalog_facets pet_type / life_stage / health_condition facets
  *  - commerce.product_categories + products of every shape + variants,
  *    grouped members, composite slots, facet links (M3a storefront)
+ *  - commerce.product_download_files + SeaweedFS objects for downloadable
+ *    products (M3b; skipped with a warning when S3_* is unconfigured)
  *
  * Re-seeding re-baselines variant stock so e2e runs are deterministic.
+ * Composite slots are upserted by name (never delete-recreated): M3b cart
+ * and order component rows FK to slot ids, so those ids must stay stable.
  *
  * Run with: pnpm db:seed
  */
@@ -557,6 +563,45 @@ async function main(): Promise<void> {
         facets: [{ facetType: 'life_stage', slug: 'puppy-kitten' }],
       },
       {
+        slug: 'daily-wellness-chews',
+        categorySlug: 'joint-care',
+        name: 'Daily Wellness Chews',
+        summary: 'Everyday multivitamin soft chew for dogs.',
+        descriptionMd: 'One chew a day; the wellness box favourite.',
+        productType: 'simple',
+        variants: [
+          {
+            name: '30 chews',
+            sku: 'SKU-WCH-100',
+            price: 9.0,
+            stock: 300,
+            isDefault: true,
+            weightGrams: 240,
+          },
+        ],
+        facets: [{ facetType: 'pet_type', slug: 'dog' }],
+      },
+      {
+        slug: 'care-video-pack',
+        categorySlug: 'services-and-guides',
+        name: 'Pet Care Video Pack',
+        summary: 'Downloadable video series: handling, grooming, and first aid.',
+        descriptionMd: 'Streamable now, downloadable after purchase.',
+        productType: 'simple',
+        isVirtual: true,
+        isDownloadable: true,
+        variants: [
+          {
+            name: 'Video pack',
+            sku: 'SKU-VID-001',
+            price: 5.0,
+            stock: 500,
+            isDefault: true,
+            weightGrams: null,
+          },
+        ],
+      },
+      {
         slug: 'partner-diet-delivery',
         categorySlug: 'pharmacy',
         name: 'Renal Diet Delivery (Partner)',
@@ -584,10 +629,21 @@ async function main(): Promise<void> {
         categorySlug: 'bundles',
         name: 'Monthly Wellness Box',
         summary: 'Configurable box — pick a chew and an optional guide.',
-        descriptionMd: 'Composite product; purchasing lands in M3b.',
+        descriptionMd:
+          'Fixed-price composite: the default variant carries the £27 box price; stock lives on the components.',
         productType: 'composite',
         pricingMode: 'fixed',
-        variants: [],
+        variants: [
+          {
+            // Price carrier only — components hold the stock (M3b).
+            name: 'Monthly box',
+            sku: 'SKU-WELL-BOX',
+            price: 27.0,
+            stock: 0,
+            isDefault: true,
+            weightGrams: null,
+          },
+        ],
         slots: [
           {
             name: 'Choose your chew',
@@ -597,8 +653,8 @@ async function main(): Promise<void> {
             maxSelect: 1,
             options: [
               {
-                productSlug: 'joint-care-chews',
-                componentVariantSku: 'SKU-JCC-S',
+                productSlug: 'daily-wellness-chews',
+                componentVariantSku: 'SKU-WCH-100',
                 quantity: 1,
                 sortOrder: 10,
               },
@@ -616,6 +672,47 @@ async function main(): Promise<void> {
                 quantity: 1,
                 priceOverride: 3.0,
                 sortOrder: 10,
+              },
+            ],
+          },
+        ],
+      },
+      {
+        slug: 'pet-care-kit',
+        categorySlug: 'bundles',
+        name: 'Pet Care Kit',
+        summary: 'Sum-priced kit — pay only for the options you pick.',
+        descriptionMd:
+          'Composite product priced as the total of its selected components.',
+        productType: 'composite',
+        pricingMode: 'sum',
+        variants: [],
+        slots: [
+          {
+            name: 'Build your kit',
+            description: 'Pick up to three items.',
+            position: 10,
+            minSelect: 1,
+            maxSelect: 3,
+            options: [
+              {
+                productSlug: 'puppy-training-guide',
+                quantity: 1,
+                priceOverride: 3.0,
+                sortOrder: 10,
+              },
+              {
+                productSlug: 'care-video-pack',
+                quantity: 1,
+                sortOrder: 20,
+              },
+              {
+                // Rx option: selecting it trips the derived-prescription
+                // 422 at add-to-cart (commerce.md derived flags).
+                productSlug: 'antibiotic-oral-suspension',
+                componentVariantSku: 'SKU-ABX-100',
+                quantity: 1,
+                sortOrder: 30,
               },
             ],
           },
@@ -700,25 +797,36 @@ async function main(): Promise<void> {
         });
       }
 
-      // Slots carry no natural key beyond their name — recreate each run.
-      // Options first: the FK from options to slots has no cascade.
+      // Slots must stay stable across re-seeds: M3b cart/order component
+      // rows FK to slot ids, so ids are upserted by name — never deleted.
+      // Options may be recreated freely (no inbound FK).
       if (p.slots?.length) {
-        await prisma.compositeSlotOption.deleteMany({
-          where: { slot: { compositeProductId: product.id } },
-        });
-        await prisma.compositeSlot.deleteMany({
-          where: { compositeProductId: product.id },
-        });
         for (const slotSeed of p.slots) {
-          const slot = await prisma.compositeSlot.create({
-            data: {
-              compositeProductId: product.id,
-              name: slotSeed.name,
-              description: slotSeed.description ?? null,
-              position: slotSeed.position,
-              minSelect: slotSeed.minSelect,
-              maxSelect: slotSeed.maxSelect,
-            },
+          const slotFields = {
+            description: slotSeed.description ?? null,
+            position: slotSeed.position,
+            minSelect: slotSeed.minSelect,
+            maxSelect: slotSeed.maxSelect,
+          };
+          const existingSlot = await prisma.compositeSlot.findFirst({
+            where: { compositeProductId: product.id, name: slotSeed.name },
+            select: { id: true },
+          });
+          const slot = existingSlot
+            ? await prisma.compositeSlot.update({
+                where: { id: existingSlot.id },
+                data: slotFields,
+              })
+            : await prisma.compositeSlot.create({
+                data: {
+                  compositeProductId: product.id,
+                  name: slotSeed.name,
+                  ...slotFields,
+                },
+              });
+
+          await prisma.compositeSlotOption.deleteMany({
+            where: { slotId: slot.id },
           });
           for (const optionSeed of slotSeed.options) {
             const target = await prisma.product.findUnique({
@@ -761,6 +869,117 @@ async function main(): Promise<void> {
       }
     }
     console.log(`products: upserted ${productSeeds.length}`);
+
+    // --- commerce.product_download_files + SeaweedFS objects (M3b) ---
+    // Actual bytes are PUT to SeaweedFS at seed time so signed URLs really
+    // serve something. Skipped with a warning when S3_* is unconfigured.
+    interface SeedDownloadFile {
+      productSlug: string;
+      fileName: string;
+      mimeType: string;
+      content: string;
+      sortOrder: number;
+    }
+    const downloadFileSeeds: SeedDownloadFile[] = [
+      {
+        productSlug: 'puppy-training-guide',
+        fileName: 'puppy-training-guide.pdf',
+        mimeType: 'application/pdf',
+        content:
+          '%PDF-1.4\n% Ruby Veterinary seeded placeholder: puppy training guide\n%%EOF\n',
+        sortOrder: 0,
+      },
+      {
+        productSlug: 'care-video-pack',
+        fileName: 'care-video-part-1.mp4',
+        mimeType: 'video/mp4',
+        content: 'seeded-placeholder-video-part-1',
+        sortOrder: 0,
+      },
+      {
+        productSlug: 'care-video-pack',
+        fileName: 'care-video-part-2.mp4',
+        mimeType: 'video/mp4',
+        content: 'seeded-placeholder-video-part-2',
+        sortOrder: 1,
+      },
+    ];
+
+    const s3Configured = Boolean(
+      process.env.S3_ENDPOINT &&
+        process.env.S3_ACCESS_KEY &&
+        process.env.S3_SECRET_KEY,
+    );
+    const s3 = s3Configured
+      ? new S3Client({
+          endpoint: process.env.S3_ENDPOINT,
+          region: 'us-east-1',
+          forcePathStyle: true,
+          credentials: {
+            accessKeyId: process.env.S3_ACCESS_KEY as string,
+            secretAccessKey: process.env.S3_SECRET_KEY as string,
+          },
+        })
+      : null;
+    if (s3) {
+      try {
+        await s3.send(new CreateBucketCommand({ Bucket: 'ruby-veterinary' }));
+      } catch {
+        // Already exists — fine.
+      }
+    } else {
+      console.warn(
+        'seed: S3_* not configured — download file records will be created without uploaded bytes.',
+      );
+    }
+
+    let uploadedObjects = 0;
+    for (const file of downloadFileSeeds) {
+      const product = await prisma.product.findUnique({
+        where: { slug: file.productSlug },
+      });
+      if (!product) {
+        throw new Error(`seed: missing download file product "${file.productSlug}"`);
+      }
+      const objectKey = `products/${product.id}/downloads/${file.fileName}`;
+      const bytes = Buffer.from(file.content, 'utf8');
+
+      const existingFile = await prisma.productDownloadFile.findFirst({
+        where: { productId: product.id, objectKey },
+        select: { id: true },
+      });
+      const fileFields = {
+        fileName: file.fileName,
+        fileSizeBytes: bytes.byteLength,
+        mimeType: file.mimeType,
+        sortOrder: file.sortOrder,
+      };
+      if (existingFile) {
+        await prisma.productDownloadFile.update({
+          where: { id: existingFile.id },
+          data: fileFields,
+        });
+      } else {
+        await prisma.productDownloadFile.create({
+          data: { productId: product.id, objectKey, ...fileFields },
+        });
+      }
+
+      if (s3) {
+        await s3.send(
+          new PutObjectCommand({
+            Bucket: 'ruby-veterinary',
+            Key: objectKey,
+            Body: bytes,
+            ContentType: file.mimeType,
+          }),
+        );
+        uploadedObjects += 1;
+      }
+    }
+    console.log(
+      `product_download_files: upserted ${downloadFileSeeds.length} (${uploadedObjects} objects uploaded)`,
+    );
 
     console.log('seed complete');
   } finally {

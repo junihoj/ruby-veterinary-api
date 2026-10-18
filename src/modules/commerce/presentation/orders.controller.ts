@@ -12,8 +12,12 @@ import { toLimit } from '../../../shared/cross-cutting/pagination';
 import { CurrentUser } from '../../../shared/cross-cutting/decorators';
 import type { AuthUser } from '../../../shared/cross-cutting/decorators';
 import { CommerceFacadePort } from '../application/facades/commerce-facade-port';
-import { OrderDto } from '../application/dto/commerce.responses.dto';
+import {
+  DownloadFileGrantDto,
+  OrderDto,
+} from '../application/dto/commerce.responses.dto';
 import { GetOrderQuery } from '../application/queries/get-order.query';
+import { ListOrderDownloadsQuery } from '../application/queries/list-order-downloads.query';
 import { ListOrdersQuery } from '../application/queries/list-orders.query';
 
 /** Order history (commerce.yaml Orders) — Bearer, owner-scoped reads. */
@@ -85,5 +89,28 @@ export class OrdersController {
     @Param('id') id: string,
   ): Promise<OrderDto> {
     return this.commerce.getOrder(new GetOrderQuery(user.id, id));
+  }
+
+  @Get(':id/downloads')
+  @ApiOperation({
+    operationId: 'listOrderDownloads',
+    summary: 'Downloadable files granted on the order',
+  })
+  @ApiOkResponse({
+    description: 'Grants with remaining counts and expiry (file-level).',
+  })
+  @ApiUnauthorizedResponse({
+    description: 'INVALID_CREDENTIALS or TOKEN_EXPIRED.',
+  })
+  @ApiNotFoundResponse({
+    description: 'RESOURCE_NOT_FOUND — unknown or foreign order.',
+  })
+  listDownloads(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+  ): Promise<DownloadFileGrantDto[]> {
+    return this.commerce.listOrderDownloads(
+      new ListOrderDownloadsQuery(user.id, id),
+    );
   }
 }

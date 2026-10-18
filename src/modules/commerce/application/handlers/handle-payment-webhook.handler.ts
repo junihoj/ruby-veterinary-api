@@ -47,21 +47,15 @@ export class HandlePaymentWebhookHandler implements ICommandHandler<HandlePaymen
       return { received: true, duplicate: false };
     }
 
-    const lines = payment.order.items.map((item) => ({
-      variantId: item.variantId,
-      quantity: item.quantity,
-    }));
-
     switch (command.event.type) {
       case 'payment_intent.succeeded':
-        await this.payments.confirmCapture(payment.id, payment.orderId, lines);
+        await this.payments.confirmCapture(payment.id, payment.orderId);
         break;
       case 'payment_intent.payment_failed':
         await this.payments.failPending(
           payment.id,
           payment.orderId,
           'gateway_declined',
-          lines,
         );
         break;
       case 'charge.refunded':

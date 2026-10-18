@@ -7,22 +7,55 @@ const productSelect = {
     name: true,
     slug: true,
     productType: true,
+    pricingMode: true,
     requiresPrescription: true,
     isVirtual: true,
     isDownloadable: true,
   },
 };
 
+/** Component rows carry everything line pricing and eligibility need. */
+const componentInclude = {
+  variant: { select: { name: true, price: true, currency: true } },
+  product: {
+    select: {
+      name: true,
+      slug: true,
+      requiresPrescription: true,
+      isVirtual: true,
+      isDownloadable: true,
+    },
+  },
+  // For price_override lookup: (slot, product, pinned variant) identity.
+  slot: {
+    select: {
+      options: {
+        select: {
+          productId: true,
+          componentVariantId: true,
+          priceOverride: true,
+        },
+      },
+    },
+  },
+} satisfies Prisma.CartItemComponentInclude;
+
 const cartInclude = {
   items: {
     orderBy: { addedAt: 'asc' },
-    include: { variant: { include: { product: productSelect } } },
+    include: {
+      variant: { select: { name: true, price: true, currency: true } },
+      product: productSelect,
+      components: { include: componentInclude },
+    },
   },
 } satisfies Prisma.CartInclude;
 
 const itemInclude = {
   cart: { select: { id: true, userId: true, status: true } },
-  variant: { include: { product: productSelect } },
+  variant: { select: { name: true, price: true, currency: true } },
+  product: productSelect,
+  components: { include: componentInclude },
 } satisfies Prisma.CartItemInclude;
 
 /**
@@ -57,6 +90,10 @@ export class CartRepository {
       select: { id: true },
     });
     if (!cart) return;
+    // Components first: the FK to cart_items has no cascade.
+    await this.prisma.cartItemComponent.deleteMany({
+      where: { cartItem: { cartId: cart.id } },
+    });
     await this.prisma.cartItem.deleteMany({ where: { cartId: cart.id } });
   }
 
@@ -67,14 +104,17 @@ export class CartRepository {
     });
   }
 
-  /** Existing line for (cart, variant, pet) — `uq_cart_items_line`. */
+  /** Existing line for (cart, product, variant, pet) — `uq_cart_items_line`.
+   *  Product is part of the key so sum composite lines (variant null) can
+   *  never merge across different composite products. */
   async findLine(
     cartId: string,
-    variantId: string,
+    productId: string,
+    variantId: string | null,
     petId: string | null,
   ): Promise<{ id: string; quantity: number } | null> {
     return this.prisma.cartItem.findFirst({
-      where: { cartId, variantId, petId },
+      where: { cartId, productId, variantId, petId },
       select: { id: true, quantity: true },
     });
   }
@@ -82,9 +122,15 @@ export class CartRepository {
   async createLine(data: {
     cartId: string;
     productId: string;
-    variantId: string;
+    variantId: string | null;
     quantity: number;
     petId: string | null;
+    components?: Array<{
+      slotId: string;
+      productId: string;
+      variantId: string;
+      quantity: number;
+    }>;
   }): Promise<{ id: string }> {
     return this.prisma.cartItem.create({
       data: {
@@ -93,9 +139,47 @@ export class CartRepository {
         variantId: data.variantId,
         quantity: data.quantity,
         petId: data.petId ?? undefined,
+        ...(data.components?.length
+          ? {
+              components: {
+                create: data.components.map((component) => ({
+                  slotId: component.slotId,
+                  productId: component.productId,
+                  variantId: component.variantId,
+                  quantity: component.quantity,
+                })),
+              },
+            }
+          : {}),
       },
       select: { id: true },
     });
+  }
+
+  /** Swap a composite line's selections (re-add with a new configuration). */
+  async replaceLineComponents(
+    itemId: string,
+    components: Array<{
+      slotId: string;
+      productId: string;
+      variantId: string;
+      quantity: number;
+    }>,
+  ): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.cartItemComponent.deleteMany({
+        where: { cartItemId: itemId },
+      }),
+      this.prisma.cartItemComponent.createMany({
+        data: components.map((component) => ({
+          cartItemId: itemId,
+          slotId: component.slotId,
+          productId: component.productId,
+          variantId: component.variantId,
+          quantity: component.quantity,
+        })),
+      }),
+    ]);
   }
 
   async incrementLine(
@@ -116,10 +200,13 @@ export class CartRepository {
     });
   }
 
-  /** Ownership-scoped delete: removing another user's line is a no-op (204). */
+  /** Ownership-scoped delete: removing another user's line is a no-op (204).
+   *  Components are removed first — their FK to cart_items has no cascade. */
   async deleteItemOwnedBy(itemId: string, userId: string): Promise<void> {
-    await this.prisma.cartItem.deleteMany({
-      where: { id: itemId, cart: { userId, status: 'open' } },
+    const ownership = { id: itemId, cart: { userId, status: 'open' } };
+    await this.prisma.cartItemComponent.deleteMany({
+      where: { cartItem: ownership },
     });
+    await this.prisma.cartItem.deleteMany({ where: ownership });
   }
 }

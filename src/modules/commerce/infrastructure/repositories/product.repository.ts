@@ -120,6 +120,97 @@ export class ProductRepository {
     });
   }
 
+  /**
+   * Composite product with everything composite cart-add needs: slots with
+   * their per-slot min/max, options with candidate flags, and the resolved
+   * component variant (pinned variant, else the candidate's default active
+   * one) carrying price and stock for the advisory check.
+   */
+  async findCompositeForCart(productId: string) {
+    return this.prisma.product.findUnique({
+      where: { id: productId },
+      select: {
+        id: true,
+        published: true,
+        productType: true,
+        pricingMode: true,
+        requiresPrescription: true,
+        isVirtual: true,
+        isDownloadable: true,
+        variants: {
+          where: { active: true },
+          orderBy: [{ isDefault: 'desc' }, { price: 'asc' }],
+          select: {
+            id: true,
+            isDefault: true,
+            price: true,
+            currency: true,
+            stockQuantity: true,
+            stockReserved: true,
+          },
+        },
+        compositeSlots: {
+          orderBy: { position: 'asc' },
+          select: {
+            id: true,
+            minSelect: true,
+            maxSelect: true,
+            options: {
+              orderBy: { sortOrder: 'asc' },
+              select: {
+                id: true,
+                productId: true,
+                componentVariantId: true,
+                quantity: true,
+                priceOverride: true,
+                product: {
+                  select: {
+                    id: true,
+                    published: true,
+                    productType: true,
+                    requiresPrescription: true,
+                    isVirtual: true,
+                    isDownloadable: true,
+                    variants: {
+                      where: { active: true, isDefault: true },
+                      take: 1,
+                      select: {
+                        id: true,
+                        price: true,
+                        currency: true,
+                        stockQuantity: true,
+                        stockReserved: true,
+                      },
+                    },
+                  },
+                },
+                pinnedVariant: {
+                  select: {
+                    id: true,
+                    active: true,
+                    price: true,
+                    currency: true,
+                    stockQuantity: true,
+                    stockReserved: true,
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  }
+
+  /** Slot identities for deriving a sum composite's product from components. */
+  async findSlotsByIds(slotIds: string[]) {
+    if (slotIds.length === 0) return [];
+    return this.prisma.compositeSlot.findMany({
+      where: { id: { in: slotIds } },
+      select: { id: true, compositeProductId: true },
+    });
+  }
+
   async findCategory(id: string) {
     return this.prisma.productCategory.findUnique({ where: { id } });
   }

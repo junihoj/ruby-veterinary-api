@@ -88,11 +88,39 @@ function main(): void {
     ],
     ['GET', '/orders', ['listOrders', '200', '401']],
     ['GET', '/orders/{id}', ['getOrder', '200', '401', '404']],
+    // commerce.yaml (M3b — composite & digital)
+    [
+      'GET',
+      '/orders/{id}/downloads',
+      ['listOrderDownloads', '200', '401', '404'],
+    ],
+    [
+      'POST',
+      '/downloads/{grantId}/url',
+      ['issueDownloadUrl', '200', '401', '403', '404'],
+    ],
+    ['GET', '/subscriptions', ['listSubscriptions', '200', '401']],
+    [
+      'POST',
+      '/subscriptions',
+      ['createSubscription', '201', '400', '401', '422'],
+    ],
+    [
+      'PATCH',
+      '/subscriptions/{id}',
+      ['updateSubscription', '200', '400', '401', '404'],
+    ],
+    ['DELETE', '/subscriptions/{id}', ['cancelSubscription', '204', '401']],
     ['POST', '/admin/products', ['adminCreateProduct', '201', '401', '403']],
     [
       'PATCH',
       '/admin/products/{id}',
       ['adminUpdateProduct', '200', '401', '403', '404'],
+    ],
+    [
+      'POST',
+      '/admin/products/{id}/download-files',
+      ['adminCreateDownloadFile', '201', '400', '401', '403', '404'],
     ],
     // webhooks.yaml (payments)
     ['POST', '/webhooks/payments', ['receivePaymentWebhook', '200', '401']],

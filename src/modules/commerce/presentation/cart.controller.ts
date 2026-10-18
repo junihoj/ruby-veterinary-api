@@ -86,12 +86,12 @@ export class CartController {
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({
     operationId: 'addCartItem',
-    summary: 'Add a variant to the cart (merges into an existing line)',
+    summary: 'Add a variant or composite selection to the cart (merges lines)',
   })
   @ApiCreatedResponse({ description: 'The new or merged cart line.' })
   @ApiBadRequestResponse({
     description:
-      'VALIDATION_FAILED — unknown variant, external/grouped/composite line, unpublished product.',
+      'VALIDATION_FAILED — unknown variant/slot/option, per-slot count outside min/max, external/grouped line, unpublished product.',
   })
   @ApiUnauthorizedResponse({
     description: 'INVALID_CREDENTIALS or TOKEN_EXPIRED.',

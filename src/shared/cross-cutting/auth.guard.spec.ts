@@ -18,6 +18,7 @@ const config = {
   jwtRefreshTtlSeconds: 2_592_000,
   swaggerEnabled: false,
   corsOrigins: [],
+  subscriptionsTickMs: 0,
 };
 
 function httpContext(req: unknown): ExecutionContext {

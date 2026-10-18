@@ -1,4 +1,11 @@
-import { IsIn, IsInt, IsOptional, IsString, Min } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  Min,
+} from 'class-validator';
 
 /**
  * Validated environment schema (§9). No hardcoded secrets or URLs; every value
@@ -61,6 +68,16 @@ export class EnvVariables {
   @IsOptional()
   @IsString()
   PAYMENT_WEBHOOK_SECRET?: string;
+
+  // M3b — subscription auto-refill tick (ms). 0 disables the in-process
+  // timer; the default runs it every minute in dev/prod. E2E forces 0 via
+  // test/setup-env.ts so auto-orders never race assertions. Kept as a
+  // string like other env-typed values (no implicit conversion at boot).
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'SUBSCRIPTIONS_TICK_MS must be a non-negative integer.',
+  })
+  SUBSCRIPTIONS_TICK_MS: string = '60000';
 }
 
 export interface S3Config {
@@ -81,6 +98,7 @@ export interface AppConfig {
   corsOrigins: string[];
   s3?: S3Config;
   paymentWebhookSecret?: string;
+  subscriptionsTickMs: number;
 }
 
 export function buildAppConfig(env: EnvVariables): AppConfig {
@@ -109,6 +127,7 @@ export function buildAppConfig(env: EnvVariables): AppConfig {
     ...(env.PAYMENT_WEBHOOK_SECRET
       ? { paymentWebhookSecret: env.PAYMENT_WEBHOOK_SECRET }
       : {}),
+    subscriptionsTickMs: Number(env.SUBSCRIPTIONS_TICK_MS),
   });
 }
 
