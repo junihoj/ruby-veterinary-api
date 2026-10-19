@@ -21,6 +21,7 @@ import {
   ApiUnprocessableEntityResponse,
 } from '@nestjs/swagger';
 import { IdempotencyInterceptor } from '../../../shared/idempotency/idempotency.interceptor';
+import { Idempotent } from '../../../shared/idempotency/idempotency.decorator';
 import { CurrentUser } from '../../../shared/cross-cutting/decorators';
 import type { AuthUser } from '../../../shared/cross-cutting/decorators';
 import { CheckoutCommand } from '../application/commands/checkout.command';
@@ -73,6 +74,7 @@ export class CheckoutController {
   }
 
   @Post('checkout')
+  @Idempotent('checkout')
   @UseInterceptors(IdempotencyInterceptor)
   @ApiOperation({
     operationId: 'checkout',

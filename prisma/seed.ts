@@ -981,6 +981,107 @@ async function main(): Promise<void> {
       `product_download_files: upserted ${downloadFileSeeds.length} (${uploadedObjects} objects uploaded)`,
     );
 
+    // --- clients.clients + clients.pets + primary vet link (M4 care path) ---
+    // A phone-only legacy client (no email, no identity link) with two pets
+    // and a current primary-vet link to Dr Ada — exercises the roster, the
+    // pet detail/history surface, and the one-current-link invariant seed.
+    const ada = await prisma.user.findUnique({
+      where: { email: 'ada@ruby-veterinary.example.com' },
+      select: { id: true },
+    });
+
+    const clientSeed = {
+      displayName: 'Mabel Whitcombe',
+      phone: '+442079991234',
+    };
+    let careClient = await prisma.client.findFirst({
+      where: { phone: clientSeed.phone },
+    });
+    if (!careClient) {
+      careClient = await prisma.client.create({
+        data: {
+          userId: null,
+          displayName: clientSeed.displayName,
+          email: null,
+          phone: clientSeed.phone,
+          addressLine1: '14 Ruby Lane',
+          addressLine2: null,
+          city: 'London',
+          postalCode: 'NW1 6XE',
+          country: 'GB',
+          preferredContact: 'phone',
+          source: 'walk_in',
+          status: 'active',
+        },
+      });
+    } else {
+      await prisma.client.update({
+        where: { id: careClient.id },
+        data: { displayName: clientSeed.displayName, status: 'active' },
+      });
+    }
+
+    const petSeeds = [
+      {
+        name: 'Biscuit',
+        species: 'dog',
+        breed: 'Border Terrier',
+        sex: 'male',
+        neutered: true,
+        dateOfBirth: new Date('2021-03-14'),
+        weightKg: 8.4,
+        microchipId: '981020000123456',
+        notes: 'Nervous around loud noises.',
+      },
+      {
+        name: 'Cleo',
+        species: 'cat',
+        breed: 'Domestic Shorthair',
+        sex: 'female',
+        neutered: true,
+        dateOfBirth: new Date('2019-11-02'),
+        weightKg: 4.1,
+        microchipId: '981020000654321',
+        notes: null,
+      },
+    ];
+    const carePets = [] as Array<{ id: string }>;
+    for (const pet of petSeeds) {
+      const existing = await prisma.pet.findFirst({
+        where: { clientId: careClient.id, name: pet.name },
+      });
+      if (existing) {
+        await prisma.pet.update({ where: { id: existing.id }, data: pet });
+        carePets.push(existing);
+      } else {
+        carePets.push(
+          await prisma.pet.create({
+            data: { clientId: careClient.id, status: 'active', ...pet },
+          }),
+        );
+      }
+    }
+
+    if (ada && carePets.length > 0) {
+      const current = await prisma.primaryVeterinarianLink.findFirst({
+        where: { petId: carePets[0].id, effectiveTo: null },
+        select: { id: true },
+      });
+      if (!current) {
+        await prisma.primaryVeterinarianLink.create({
+          data: {
+            petId: carePets[0].id,
+            veterinarianUserId: ada.id,
+            effectiveFrom: new Date('2026-01-05'),
+            effectiveTo: null,
+          },
+        });
+      }
+    }
+    console.log(
+      `clients: seeded 1 phone-only client, ${carePets.length} pets, primary-vet link to Dr Ada`,
+    );
+
     console.log('seed complete');
   } finally {
     await prisma.$disconnect();

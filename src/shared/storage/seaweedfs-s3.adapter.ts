@@ -3,6 +3,7 @@ import {
   S3Client,
   PutObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import {
@@ -76,4 +77,32 @@ export class SeaweedFsS3Adapter implements ObjectStoragePort {
     });
     return { url, expiresIn: 300 };
   }
+
+  async exists(key: string): Promise<boolean> {
+    try {
+      await this.requireClient().send(
+        new HeadObjectCommand({ Bucket: 'ruby-veterinary', Key: key }),
+      );
+      return true;
+    } catch (error) {
+      const status = httpStatusOf(error);
+      if (status === 404 || status === 403) {
+        // SeaweedFS answers HEAD on a missing key with 404; some S3 builds
+        // mask it as 403 for anonymous callers. Either way: not there.
+        return false;
+      }
+      throw error;
+    }
+  }
+}
+
+/** Best-effort HTTP status of an SDK client error (NotFoundError name, $metadata). */
+function httpStatusOf(error: unknown): number | undefined {
+  if (typeof error !== 'object' || error === null) return undefined;
+  const named = error as {
+    name?: string;
+    $metadata?: { httpStatusCode?: number };
+  };
+  if (named.name === 'NotFound' || named.name === 'NoSuchKey') return 404;
+  return named.$metadata?.httpStatusCode;
 }

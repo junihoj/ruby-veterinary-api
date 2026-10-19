@@ -56,14 +56,33 @@ describe('identity/domain', () => {
       expect(permissionsForRoles(['client'])).toEqual([]);
     });
 
-    it('maps veterinarian to rx:review only', () => {
-      expect(permissionsForRoles(['veterinarian'])).toEqual(['rx:review']);
+    it('maps veterinarian to rx:review and care:write', () => {
+      expect(permissionsForRoles(['veterinarian']).sort()).toEqual(
+        ['care:write', 'rx:review'].sort(),
+      );
     });
 
-    it('maps practice_manager to ops + Rx review + catalog writes', () => {
+    it('maps practice_manager to ops + Rx review + catalog + care writes', () => {
       expect(permissionsForRoles(['practice_manager']).sort()).toEqual(
-        ['catalog:write', 'ops:inbox', 'ops:read', 'rx:review'].sort(),
+        [
+          'catalog:write',
+          'care:write',
+          'ops:inbox',
+          'ops:read',
+          'rx:review',
+        ].sort(),
       );
+    });
+
+    it('grants care:write to every staff role (M4 care path)', () => {
+      for (const role of [
+        'receptionist',
+        'veterinarian',
+        'vet_technician',
+        'practice_manager',
+      ]) {
+        expect(permissionsForRoles([role])).toContain('care:write');
+      }
     });
 
     it('accumulates additively across roles', () => {
@@ -72,7 +91,13 @@ describe('identity/domain', () => {
         'practice_manager',
       ]);
       expect(permissions.sort()).toEqual(
-        ['catalog:write', 'ops:inbox', 'ops:read', 'rx:review'].sort(),
+        [
+          'catalog:write',
+          'care:write',
+          'ops:inbox',
+          'ops:read',
+          'rx:review',
+        ].sort(),
       );
     });
 

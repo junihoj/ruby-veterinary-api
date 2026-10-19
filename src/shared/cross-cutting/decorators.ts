@@ -16,6 +16,17 @@ export const IS_PUBLIC_KEY = 'isPublic';
 /** Opt a route or controller out of AuthGuard (public browsing, ADR-0011). */
 export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
 
+export const IS_OPTIONAL_AUTH_KEY = 'isOptionalAuth';
+
+/**
+ * Optional identity (M4 intake forms): a Bearer token, when present and
+ * valid, is honored so the submission can be linked to its owner (the pet
+ * claim depends on it); an absent — or unparseable — token leaves the
+ * request anonymous instead of 401ing. The intake contract is `security: []`
+ * with no 401 status, so garbage tokens must never fail these routes either.
+ */
+export const OptionalAuth = () => SetMetadata(IS_OPTIONAL_AUTH_KEY, true);
+
 export interface RequiresOptions {
   /** Any one of these role codes satisfies the requirement. */
   roles?: string[];

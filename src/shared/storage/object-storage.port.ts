@@ -27,4 +27,11 @@ export abstract class ObjectStoragePort {
 
   /** Short-lived signed URL for a client (or browser) to GET an object. */
   abstract presignDownload(key: string): Promise<PresignedDownloadUrl>;
+
+  /**
+   * True when the object exists (HEAD). Staff upload finalisation uses it to
+   * verify the owner's PUT actually landed — the API never sees the browser
+   * complete the upload (ADR-0016).
+   */
+  abstract exists(key: string): Promise<boolean>;
 }

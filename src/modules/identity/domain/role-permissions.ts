@@ -6,11 +6,19 @@
  */
 export const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
   client: [],
-  receptionist: ['ops:read'],
-  veterinarian: ['rx:review'],
-  vet_technician: [],
+  // Care path (M4): every staff role reads and maintains client/pet records,
+  // triages intake, and reviews history uploads (client-records.yaml).
+  receptionist: ['ops:read', 'care:write'],
+  veterinarian: ['rx:review', 'care:write'],
+  vet_technician: ['care:write'],
   // Catalog maintenance (commerce.yaml admin products; shop-manager parity).
-  practice_manager: ['ops:read', 'ops:inbox', 'rx:review', 'catalog:write'],
+  practice_manager: [
+    'ops:read',
+    'ops:inbox',
+    'rx:review',
+    'catalog:write',
+    'care:write',
+  ],
 } as const;
 
 export function permissionsForRoles(roles: readonly string[]): string[] {

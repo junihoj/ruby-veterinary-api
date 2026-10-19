@@ -124,6 +124,122 @@ function main(): void {
     ],
     // webhooks.yaml (payments)
     ['POST', '/webhooks/payments', ['receivePaymentWebhook', '200', '401']],
+    // intake.yaml (M4 — forms, triage, acceptance, upload review)
+    [
+      'POST',
+      '/appointment-requests',
+      ['createAppointmentRequest', '201', '400', '409', '429'],
+    ],
+    [
+      'POST',
+      '/clients/intake',
+      ['createIntakeSubmission', '201', '400', '409', '429'],
+    ],
+    ['POST', '/uploads/sign', ['signUpload', '200', '400', '401', '413']],
+    [
+      'GET',
+      '/clients/intake/{id}/status',
+      ['getIntakeStatus', '200', '401', '404'],
+    ],
+    [
+      'GET',
+      '/admin/appointment-requests',
+      ['listAppointmentRequests', '200', '401', '403'],
+    ],
+    [
+      'PATCH',
+      '/admin/appointment-requests/{id}',
+      ['triageAppointmentRequest', '200', '400', '401', '403', '404', '409'],
+    ],
+    [
+      'GET',
+      '/admin/clients/intake',
+      ['listIntakeSubmissions', '200', '401', '403'],
+    ],
+    [
+      'PATCH',
+      '/admin/clients/intake/{id}',
+      ['updateIntakeSubmission', '200', '400', '401', '403', '404', '409'],
+    ],
+    [
+      'POST',
+      '/admin/clients/intake/{id}/accept',
+      [
+        'acceptIntakeSubmission',
+        '201',
+        '400',
+        '401',
+        '403',
+        '404',
+        '409',
+        '422',
+      ],
+    ],
+    ['GET', '/admin/uploads', ['listHistoryUploads', '200', '401', '403']],
+    [
+      'GET',
+      '/admin/uploads/{id}/url',
+      ['getHistoryUploadUrl', '200', '401', '403', '404'],
+    ],
+    [
+      'PATCH',
+      '/admin/uploads/{id}',
+      ['updateHistoryUpload', '200', '400', '401', '403', '404', '409', '422'],
+    ],
+    // client-records.yaml (M4 — owner pets + staff roster & patient records)
+    ['GET', '/pets', ['listMyPets', '200', '401']],
+    ['GET', '/admin/clients', ['listClients', '200', '401', '403']],
+    ['POST', '/admin/clients', ['createClient', '201', '400', '401', '403', '409']],
+    ['GET', '/admin/clients/{id}', ['getClient', '200', '401', '403', '404']],
+    [
+      'PATCH',
+      '/admin/clients/{id}',
+      ['updateClient', '200', '400', '401', '403', '404'],
+    ],
+    [
+      'GET',
+      '/admin/clients/{id}/pets',
+      ['listClientPets', '200', '401', '403', '404'],
+    ],
+    [
+      'POST',
+      '/admin/clients/{id}/pets',
+      ['createPet', '201', '400', '401', '403', '404'],
+    ],
+    ['GET', '/admin/pets/{id}', ['getPet', '200', '401', '403', '404']],
+    [
+      'PATCH',
+      '/admin/pets/{id}',
+      ['updatePet', '200', '400', '401', '403', '404'],
+    ],
+    [
+      'GET',
+      '/admin/pets/{id}/medical-history',
+      ['listMedicalHistory', '200', '401', '403', '404'],
+    ],
+    [
+      'POST',
+      '/admin/pets/{id}/medical-history',
+      [
+        'createMedicalHistoryRecord',
+        '201',
+        '400',
+        '401',
+        '403',
+        '404',
+        '413',
+      ],
+    ],
+    [
+      'GET',
+      '/admin/pets/{id}/primary-vet',
+      ['listPrimaryVeterinarians', '200', '401', '403', '404'],
+    ],
+    [
+      'POST',
+      '/admin/pets/{id}/primary-vet',
+      ['setPrimaryVeterinarian', '200', '400', '401', '403', '404', '422'],
+    ],
   ];
 
   for (const [method, path, values] of expectedOps) {

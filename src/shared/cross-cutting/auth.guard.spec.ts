@@ -19,6 +19,7 @@ const config = {
   swaggerEnabled: false,
   corsOrigins: [],
   subscriptionsTickMs: 0,
+  formAlertEmail: 'frontdesk@ruby-veterinary.example.com',
 };
 
 function httpContext(req: unknown): ExecutionContext {

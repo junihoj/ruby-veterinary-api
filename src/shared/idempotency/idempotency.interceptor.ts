@@ -7,7 +7,9 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { Reflector } from '@nestjs/core';
 import { mergeMap, Observable, of } from 'rxjs';
+import { IDEMPOTENCY_SCOPE_KEY } from './idempotency.decorator';
 import { IdempotencyStore } from './idempotency.store';
 
 interface RequestLike {
@@ -23,15 +25,21 @@ interface RequestLike {
  * plan M3a): a replayed key within 24 hours returns the original body
  * verbatim; the same key with a different body is `409 IDEMPOTENCY_CONFLICT`.
  *
- * Runs after the global envelope interceptor, so stored bodies are the
- * pre-envelope handler results — a replay is re-wrapped with a fresh
- * requestId exactly like the original. Scope includes the user id, so keys
- * never cross accounts. The route's own status code is re-applied by Nest on
- * replay, so no status juggling is needed here.
+ * The scope comes from the route's `@Idempotent(name)` decorator (M4
+ * generalization — checkout was the first and only route before it), falling
+ * back to `checkout` for safety. Runs after the global envelope interceptor,
+ * so stored bodies are the pre-envelope handler results — a replay is
+ * re-wrapped with a fresh requestId exactly like the original. Scope includes
+ * the user id (`anonymous` when unauthenticated), so keys never cross
+ * accounts or collide between routes. The route's own status code is
+ * re-applied by Nest on replay, so no status juggling is needed here.
  */
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
-  constructor(private readonly store: IdempotencyStore) {}
+  constructor(
+    private readonly store: IdempotencyStore,
+    private readonly reflector: Reflector,
+  ) {}
 
   async intercept(
     context: ExecutionContext,
@@ -54,7 +62,12 @@ export class IdempotencyInterceptor implements NestInterceptor {
     }
 
     const userId = req.user?.id;
-    const scope = `checkout:${userId ?? 'anonymous'}`;
+    const name =
+      this.reflector.getAllAndOverride<string | undefined>(
+        IDEMPOTENCY_SCOPE_KEY,
+        [context.getHandler(), context.getClass()],
+      ) ?? 'checkout';
+    const scope = `${name}:${userId ?? 'anonymous'}`;
     const requestHash = sha256(req.rawBody ?? JSON.stringify(req.body ?? null));
     const existing = await this.store.find(scope, key);
     if (existing) {

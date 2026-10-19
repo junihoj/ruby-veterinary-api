@@ -44,6 +44,12 @@ export class EnvVariables {
   @IsIn(['true', 'false'])
   SWAGGER_ENABLED: string = 'true';
 
+  // M4 — intake form alert destination (ADR-0013: console adapter prints
+  // until an SMTP provider is chosen; this is the `to` the adapter uses).
+  @IsOptional()
+  @IsString()
+  FORM_ALERT_EMAIL: string = 'frontdesk@ruby-veterinary.example.com';
+
   @IsOptional()
   @IsString()
   CORS_ORIGINS: string = 'http://localhost:3001,http://localhost:3000';
@@ -99,6 +105,7 @@ export interface AppConfig {
   s3?: S3Config;
   paymentWebhookSecret?: string;
   subscriptionsTickMs: number;
+  formAlertEmail: string;
 }
 
 export function buildAppConfig(env: EnvVariables): AppConfig {
@@ -128,6 +135,7 @@ export function buildAppConfig(env: EnvVariables): AppConfig {
       ? { paymentWebhookSecret: env.PAYMENT_WEBHOOK_SECRET }
       : {}),
     subscriptionsTickMs: Number(env.SUBSCRIPTIONS_TICK_MS),
+    formAlertEmail: env.FORM_ALERT_EMAIL,
   });
 }
 
