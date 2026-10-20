@@ -435,13 +435,13 @@ describe('Commerce catalog, admin & cart (e2e)', () => {
       expect(cart.data.subtotal).toBe('37.50');
     });
 
-    it('answers 422 PRESCRIPTION_PENDING for an Rx variant', async () => {
+    it('answers 400 VALIDATION_FAILED for an Rx variant without its pet (M5)', async () => {
+      // M5 lifted the blanket Rx block: the line flows to the pharmacy hold
+      // at checkout, but it must name its pet from the start.
       const res = await post('/cart/items', shopperToken)
         .send({ variantId: rxVariantId, quantity: 1 })
-        .expect(422);
-      expect((res.body as ErrorEnvelope).error.code).toBe(
-        'PRESCRIPTION_PENDING',
-      );
+        .expect(400);
+      expect((res.body as ErrorEnvelope).error.code).toBe('VALIDATION_FAILED');
     });
 
     it('answers 400 for unknown and malformed variant ids', async () => {

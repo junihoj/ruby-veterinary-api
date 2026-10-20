@@ -34,8 +34,21 @@ export interface PlaceOrderLine {
   unitPrice: string;
   lineTotal: string;
   petId: string | null;
+  /** Rx line (own flag or derived from components) — engages the pharmacy hold. */
+  requiresPrescription: boolean;
   /** Composite selections: the components carry this line's stock. */
   components?: PlaceOrderComponent[];
+}
+
+/** The created order plus per-item identity (the Rx hold needs pet → item ids). */
+export interface PlacedOrder {
+  orderId: string;
+  items: Array<{
+    id: string;
+    productId: string;
+    petId: string | null;
+    requiresPrescription: boolean;
+  }>;
 }
 
 export interface PlaceOrderInput {
@@ -91,8 +104,13 @@ export class OrderRepository {
     });
   }
 
-  /** Returns the new order id; throws StockConflictError/DuplicateOrderKeyError. */
-  async placeOrder(input: PlaceOrderInput): Promise<string> {
+  /**
+   * Returns the created order (id + per-item identity); throws
+   * StockConflictError/DuplicateOrderKeyError. An order with Rx lines is
+   * created `awaiting_prescription` (Flow 4) — the pharmacy hold engages
+   * right after this transaction commits.
+   */
+  async placeOrder(input: PlaceOrderInput): Promise<PlacedOrder> {
     try {
       return await this.prisma.$transaction(async (tx) => {
         for (const line of input.lines) {
@@ -122,7 +140,9 @@ export class OrderRepository {
         const order = await tx.order.create({
           data: {
             userId: input.userId,
-            status: 'pending_payment',
+            status: input.lines.some((line) => line.requiresPrescription)
+              ? 'awaiting_prescription'
+              : 'pending_payment',
             subtotal: input.totals.subtotal,
             taxTotal: input.totals.taxTotal,
             shippingTotal: input.totals.shippingTotal,
@@ -137,6 +157,7 @@ export class OrderRepository {
           },
         });
 
+        const items: PlacedOrder['items'] = [];
         for (const line of input.lines) {
           const item = await tx.orderItem.create({
             data: {
@@ -148,6 +169,12 @@ export class OrderRepository {
               lineTotal: line.lineTotal,
               petId: line.petId ?? undefined,
             },
+          });
+          items.push({
+            id: item.id,
+            productId: item.productId,
+            petId: item.petId,
+            requiresPrescription: line.requiresPrescription,
           });
           if (line.components?.length) {
             // Pick-list snapshot: what was in this box at placement.
@@ -190,7 +217,7 @@ export class OrderRepository {
           });
           await tx.cartItem.deleteMany({ where: { cartId: input.cartId } });
         }
-        return order.id;
+        return { orderId: order.id, items };
       });
     } catch (error) {
       if (isUniqueViolation(error, 'uq_orders_idempotency')) {

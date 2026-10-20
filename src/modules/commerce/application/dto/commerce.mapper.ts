@@ -297,7 +297,7 @@ export function toCartItemDto(item: CartItemRow): CartItemDto {
     unitPrice: fromPence(unitPence),
     lineTotal: fromPence(unitPence * item.quantity),
     currency,
-    petId: item.petId,
+    petId: item.petId ? PrefixedId.format('pet', item.petId) : null,
     addedAt: item.addedAt.toISOString(),
     components: item.components.map((component) => ({
       slotId: PrefixedId.format('compositeSlot', component.slotId),

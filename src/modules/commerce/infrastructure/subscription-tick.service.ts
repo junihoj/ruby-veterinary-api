@@ -102,9 +102,11 @@ export class SubscriptionTickService implements OnModuleInit, OnModuleDestroy {
   ): Promise<void> {
     const dueAt = new Date(subscription.nextOrderAt.getTime());
 
-    // Rx auto-refill needs an approved prescription state per order — that
-    // check arrives with Pharmacy (M5); until then the row pauses instead
-    // of ordering (commerce.md subscriptions invariant).
+    // Rx auto-refill needs an approved prescription state per order. M5
+    // shipped the review flow but deferred the subscription auto-order
+    // loop (each refill would need its own request + approval), so the
+    // row keeps pausing instead of ordering (commerce.md subscriptions
+    // invariant) — re-enable here once the loop exists.
     if (subscription.product.requiresPrescription) {
       await this.subscriptions.pause(subscription.id);
       this.logger.warn(
@@ -133,6 +135,9 @@ export class SubscriptionTickService implements OnModuleInit, OnModuleDestroy {
       unitPrice: fromPence(unitPence),
       lineTotal: fromPence(unitPence * SUBSCRIPTION_QUANTITY),
       petId: subscription.petId,
+      // Subscriptions are physical simple/variable only (Rx never allowed at
+      // creation) — an auto-order can never engage a pharmacy hold.
+      requiresPrescription: false,
     };
 
     let intent: PaymentIntent;
@@ -151,16 +156,18 @@ export class SubscriptionTickService implements OnModuleInit, OnModuleDestroy {
 
     let orderId: string;
     try {
-      orderId = await this.orders.placeOrder({
-        userId: subscription.userId,
-        cartId: null, // system order — no cart to convert
-        method: 'ship',
-        shippingAddress: null,
-        totals,
-        lines: [line],
-        intent,
-        idempotencyKey: `sub:${subscription.id}:${dueAt.toISOString()}`,
-      });
+      orderId = (
+        await this.orders.placeOrder({
+          userId: subscription.userId,
+          cartId: null, // system order — no cart to convert
+          method: 'ship',
+          shippingAddress: null,
+          totals,
+          lines: [line],
+          intent,
+          idempotencyKey: `sub:${subscription.id}:${dueAt.toISOString()}`,
+        })
+      ).orderId;
     } catch (error) {
       if (error instanceof StockConflictError) {
         // "A due row that cannot reserve stock is paused, not ordered."

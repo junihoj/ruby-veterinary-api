@@ -52,7 +52,7 @@ function buildService(options: {
   tickMs?: number;
   rows?: ReturnType<typeof dueRow>[];
   claimResult?: boolean;
-  placeOrderImpl?: () => Promise<string>;
+  placeOrderImpl?: () => Promise<{ orderId: string }>;
 }): { service: SubscriptionTickService; mocks: Mocks } {
   const rows = options.rows ?? [dueRow()];
   const mocks: Mocks = {
@@ -63,9 +63,10 @@ function buildService(options: {
     placeOrder:
       options.placeOrderImpl !== undefined
         ? jest.fn().mockImplementation(options.placeOrderImpl)
-        : jest
-            .fn()
-            .mockResolvedValue('ord_00000000-0000-4000-8000-000000000001'),
+        : jest.fn().mockResolvedValue({
+            orderId: 'ord_00000000-0000-4000-8000-000000000001',
+            items: [],
+          }),
     findPendingByOrder: jest
       .fn()
       .mockResolvedValue({ id: 'pay_00000000-0000-4000-8000-000000000001' }),
@@ -192,7 +193,10 @@ describe('commerce/SubscriptionTickService (M3b auto-refill)', () => {
       placeOrderImpl: jest
         .fn()
         .mockRejectedValueOnce(new Error('unexpected'))
-        .mockResolvedValueOnce('ord_00000000-0000-4000-8000-000000000002'),
+        .mockResolvedValueOnce({
+          orderId: 'ord_00000000-0000-4000-8000-000000000002',
+          items: [],
+        }),
     });
 
     await service.tickOnce();

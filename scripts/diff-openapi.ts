@@ -240,6 +240,32 @@ function main(): void {
       '/admin/pets/{id}/primary-vet',
       ['setPrimaryVeterinarian', '200', '400', '401', '403', '404', '422'],
     ],
+    // pharmacy.yaml (M5 — review queue, decisions, Rx hold)
+    [
+      'GET',
+      '/prescriptions/queue',
+      ['listPrescriptionQueue', '200', '401', '403'],
+    ],
+    [
+      'GET',
+      '/prescriptions/{id}',
+      ['getPrescriptionRequest', '200', '401', '403', '404'],
+    ],
+    [
+      'POST',
+      '/prescriptions/{id}/approve',
+      ['approvePrescription', '200', '400', '401', '403', '404', '409'],
+    ],
+    [
+      'POST',
+      '/prescriptions/{id}/reject',
+      ['rejectPrescription', '200', '400', '401', '403', '404', '409'],
+    ],
+    [
+      'POST',
+      '/prescriptions/{id}/query',
+      ['queryPrescription', '200', '400', '401', '403', '404', '409'],
+    ],
   ];
 
   for (const [method, path, values] of expectedOps) {

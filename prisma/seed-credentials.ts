@@ -5,3 +5,7 @@
  */
 export const CATALOG_MANAGER_EMAIL = 'grace@ruby-veterinary.example.com';
 export const CATALOG_MANAGER_PASSWORD = 'catalog-manager-dev-2026';
+
+/** M5 pharmacy: the seeded veterinarian (rx:review + the only decider). */
+export const VETERINARIAN_EMAIL = 'ada@ruby-veterinary.example.com';
+export const VETERINARIAN_PASSWORD = 'veterinarian-dev-2026';

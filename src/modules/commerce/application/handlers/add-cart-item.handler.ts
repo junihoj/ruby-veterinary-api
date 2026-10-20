@@ -1,12 +1,14 @@
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
 import { PrefixedId } from '../../../../shared/kernel/domain/prefixed-id';
+import { ClientRecordsFacadePort } from '../../../client-patient-records/application/facades/client-records-facade-port';
+import { ListMyPetsQuery } from '../../../client-patient-records/application/queries/list-my-pets.query';
 import { CartRepository } from '../../infrastructure/repositories/cart.repository';
 import { ProductRepository } from '../../infrastructure/repositories/product.repository';
 import { AddCartItemCommand } from '../commands/add-cart-item.command';
 import { toCartItemDto } from '../dto/commerce.mapper';
 import { CartItemDto } from '../dto/commerce.responses.dto';
 import type { ComponentSelectionDto } from '../dto/commerce.requests.dto';
-import { badRequest, prescriptionPending, stockChanged } from '../errors';
+import { badRequest, notFound, stockChanged } from '../errors';
 
 /** One validated component selection, ready to persist (raw UUIDs). */
 interface ResolvedComponent {
@@ -28,11 +30,13 @@ export class AddCartItemHandler implements ICommandHandler<AddCartItemCommand> {
   constructor(
     private readonly carts: CartRepository,
     private readonly products: ProductRepository,
+    private readonly clientRecords: ClientRecordsFacadePort,
   ) {}
 
   async execute(command: AddCartItemCommand): Promise<CartItemDto> {
-    // Pet association: validate the identifier's shape only — existence is
-    // enforced by the cross-schema FK and exercised when pet claims ship.
+    // Pet association: validate the identifier's shape now; Rx lines also
+    // need existence + ownership (M5 guardrail) — non-Rx lines keep the
+    // cross-schema FK as their only enforcement.
     const petId = command.input.petId
       ? PrefixedId.tryAnyToUuid(command.input.petId)
       : null;
@@ -41,6 +45,13 @@ export class AddCartItemHandler implements ICommandHandler<AddCartItemCommand> {
     const resolved = command.input.components?.length
       ? await this.resolveCompositeSelection(command)
       : await this.resolveVariantSelection(command);
+
+    if (resolved.requiresPrescription) {
+      if (!petId) {
+        throw badRequest('Prescription items need the pet they are for.');
+      }
+      await this.assertPetOwned(command.userId, petId);
+    }
 
     const cart = await this.carts.ensureOpenCart(command.userId);
     const existing = await this.carts.findLine(
@@ -81,13 +92,27 @@ export class AddCartItemHandler implements ICommandHandler<AddCartItemCommand> {
     return toCartItemDto(row as NonNullable<typeof row>);
   }
 
+  /**
+   * Rx pet claim (M5): the pet named on a prescription line must be one of
+   * the caller's own pets — a foreign or unknown pet answers 404.
+   */
+  private async assertPetOwned(userId: string, petUuid: string): Promise<void> {
+    const pets = await this.clientRecords.listMyPets(
+      new ListMyPetsQuery(userId),
+    );
+    const owned = pets.some(
+      (pet) => (PrefixedId.tryAnyToUuid(pet.id) ?? pet.id) === petUuid,
+    );
+    if (!owned) throw notFound('Unknown pet.');
+  }
+
   // ---------------------------------------------------------------- composite
 
   /**
    * Composite path: the product is identified by the selections' slot
    * membership (and cross-checked against variantId when present). Validates
-   * slot membership, per-slot min/max, and derived prescription flags, then
-   * resolves each component to its purchasable variant.
+   * slot membership and per-slot min/max, resolves each component to its
+   * purchasable variant, and derives the line's prescription flag (M3b OR).
    */
   private async resolveCompositeSelection(command: AddCartItemCommand) {
     const input = command.input;
@@ -237,19 +262,15 @@ export class AddCartItemHandler implements ICommandHandler<AddCartItemCommand> {
     }
 
     // Derived prescription flag (OR of the composite and every selected
-    // option) — still held for the pharmacy flow (422, M5 lifts it).
-    if (
+    // option) — an Rx line requires its pet (M5), enforced in execute().
+    const requiresPrescription =
       composite.requiresPrescription ||
-      components.some((component) => component.requiresPrescription)
-    ) {
-      throw prescriptionPending(
-        'This item needs veterinary authorisation before it can be added to your cart.',
-      );
-    }
+      components.some((component) => component.requiresPrescription);
 
     return {
       productId,
       lineVariantId,
+      requiresPrescription,
       components: components.map(
         ({ slotId, productId: componentProductId, variantId, quantity }) => ({
           slotId,
@@ -295,16 +316,11 @@ export class AddCartItemHandler implements ICommandHandler<AddCartItemCommand> {
     if (product.productType === 'composite') {
       throw badRequest('This box needs its slot selections.');
     }
-    if (product.requiresPrescription) {
-      // Temporary M3a block; lifted when the prescription flow releases it.
-      throw prescriptionPending(
-        'This item needs veterinary authorisation before it can be added to your cart.',
-      );
-    }
 
     return {
       productId: product.id,
       lineVariantId: variantId,
+      requiresPrescription: product.requiresPrescription,
       components: undefined,
       stockChecks: [
         {

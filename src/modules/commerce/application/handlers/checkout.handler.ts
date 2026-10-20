@@ -2,17 +2,23 @@ import { HttpException } from '@nestjs/common';
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
 import { ClinicContentFacadePort } from '../../../clinic-content/application/facades/clinic-content-facade-port';
 import { GetClinicContactQuery } from '../../../clinic-content/application/queries/get-clinic-contact.query';
+import { SubmitPrescriptionHoldCommand } from '../../../pharmacy-authorisation/application/commands/submit-prescription-hold.command';
+import { PharmacyFacadePort } from '../../../pharmacy-authorisation/application/facades/pharmacy-facade-port';
 import {
   PaymentGatewayPort,
   PaymentGatewayUnavailableError,
   PaymentIntent,
 } from '../../infrastructure/payment/payment-gateway.port';
 import { CartRepository } from '../../infrastructure/repositories/cart.repository';
+import { PaymentRepository } from '../../infrastructure/repositories/payment.repository';
 import {
   OrderRepository,
   PlaceOrderLine,
 } from '../../infrastructure/repositories/order.repository';
-import { assertCartLinesEligible } from '../cart-eligibility';
+import {
+  assertCartLinesEligible,
+  cartLineRequiresPrescription,
+} from '../cart-eligibility';
 import { CheckoutCommand } from '../commands/checkout.command';
 import { toOrderDto } from '../dto/commerce.mapper';
 import { OrderDto } from '../dto/commerce.responses.dto';
@@ -31,8 +37,10 @@ export class CheckoutHandler implements ICommandHandler<CheckoutCommand> {
   constructor(
     private readonly carts: CartRepository,
     private readonly orders: OrderRepository,
+    private readonly payments: PaymentRepository,
     private readonly gateway: PaymentGatewayPort,
     private readonly clinic: ClinicContentFacadePort,
+    private readonly pharmacy: PharmacyFacadePort,
   ) {}
 
   async execute(command: CheckoutCommand): Promise<OrderDto> {
@@ -41,8 +49,10 @@ export class CheckoutHandler implements ICommandHandler<CheckoutCommand> {
       throw badRequest('Your cart is empty.');
     }
     const items = cart.items;
-    // 422 PRESCRIPTION_PENDING (Rx hold) / 400 (digital eligibility).
+    // Rx lines must carry a pet (422 PRESCRIPTION_PENDING defence) / 400
+    // (digital eligibility).
     assertCartLinesEligible(items, command.input.fulfilmentMethod);
+    const hasRxLines = items.some(cartLineRequiresPrescription);
 
     const method = command.input.fulfilmentMethod;
     const lineTotalsPence = items.map(
@@ -77,6 +87,7 @@ export class CheckoutHandler implements ICommandHandler<CheckoutCommand> {
         unitPrice: fromPence(unitPence),
         lineTotal: fromPence(unitPence * item.quantity),
         petId: item.petId,
+        requiresPrescription: cartLineRequiresPrescription(item),
         components: item.components.map((component) => ({
           slotId: component.slotId,
           productId: component.productId,
@@ -87,9 +98,16 @@ export class CheckoutHandler implements ICommandHandler<CheckoutCommand> {
       };
     });
 
-    let orderId: string;
+    let placed: {
+      orderId: string;
+      items: {
+        id: string;
+        petId: string | null;
+        requiresPrescription: boolean;
+      }[];
+    };
     try {
-      orderId = await this.orders.placeOrder({
+      placed = await this.orders.placeOrder({
         userId: command.userId,
         cartId: cart.id,
         method,
@@ -118,8 +136,47 @@ export class CheckoutHandler implements ICommandHandler<CheckoutCommand> {
       throw error;
     }
 
-    const order = await this.orders.findOwn(command.userId, orderId);
-    return toOrderDto(order as NonNullable<typeof order>);
+    // Flow 4: an Rx order is created `awaiting_prescription`; the pharmacy
+    // hold is placed synchronously right after the order commits (one
+    // request per order + pet + Rx line set; the pharmacy resolves each
+    // pet's primary vet itself). A hold that cannot stand — e.g. the pet
+    // has no current primary-vet link (422 PRIMARY_VET_REQUIRED) —
+    // compensates the whole order away before the error reaches the client.
+    if (hasRxLines) {
+      const groups = new Map<string, string[]>();
+      for (const item of placed.items) {
+        if (!item.requiresPrescription || !item.petId) continue;
+        groups.set(item.petId, [...(groups.get(item.petId) ?? []), item.id]);
+      }
+      try {
+        await this.pharmacy.submitHold(
+          new SubmitPrescriptionHoldCommand({
+            orderId: placed.orderId,
+            userId: command.userId,
+            ownerNote: null,
+            petGroups: [...groups.entries()].map(([petId, orderItemIds]) => ({
+              petId,
+              orderItemIds,
+            })),
+          }),
+        );
+      } catch (error) {
+        // Compensating revert (M4 pattern): the order cannot stand without
+        // its pharmacy hold — cancel it, release the reservation, fail the
+        // pending intent, then surface the original error.
+        await this.payments.cancelHeldOrder(placed.orderId, 'rx_hold_failed');
+        throw error;
+      }
+    }
+
+    const order = await this.orders.findOwn(command.userId, placed.orderId);
+    const dto = toOrderDto(order as NonNullable<typeof order>);
+    if (hasRxLines) {
+      dto.prescriptionStatus = await this.pharmacy.getOrderStatus(
+        placed.orderId,
+      );
+    }
+    return dto;
   }
 
   /** Graceful Degradation Contract: plain-language fallback + clinic phone. */

@@ -203,7 +203,8 @@ export interface OrderDto {
   fulfilmentMethod: string;
   shippingAddress: ShippingAddressDto | null;
   /** Filled by Pharmacy (M5); always null while Rx lines are blocked. */
-  prescriptionStatus: null;
+  /** Aggregate pharmacy state of this order (M5: null = no Rx lines). */
+  prescriptionStatus: string | null;
   placedAt: string;
   updatedAt: string;
   items: OrderItemDto[];

@@ -5,8 +5,11 @@ import type { FulfilmentMethod } from './money';
 /**
  * Cart eligibility rules shared by quote and checkout (commerce.yaml):
  *
- * - Prescription lines are held until the pharmacy releases them (422
- *   PRESCRIPTION_PENDING — temporary while Rx lines are blocked, M5).
+ * - Prescription lines flow through since M5 (the pharmacy hold engages at
+ *   checkout, Flow 4), but every Rx line must carry a pet — enforced at
+ *   add-to-cart and re-checked here as defence: a line whose Rx details
+ *   never arrived answers 422 PRESCRIPTION_PENDING instead of silently
+ *   skipping authorisation.
  * - Digital fulfilment requires every line to be virtual or downloadable.
  *   For composite lines that flag is *derived from the selection* (M3b): the
  *   line qualifies only when every selected component product is itself
@@ -18,9 +21,9 @@ export function assertCartLinesEligible(
   method: FulfilmentMethod,
 ): void {
   for (const item of items) {
-    if (item.product.requiresPrescription) {
+    if (cartLineRequiresPrescription(item) && !item.petId) {
       throw prescriptionPending(
-        'Prescription items are held for veterinary authorisation before checkout.',
+        'Prescription items need the pet they are for before checkout.',
       );
     }
   }
@@ -33,6 +36,18 @@ export function assertCartLinesEligible(
       );
     }
   }
+}
+
+/**
+ * Whether a line needs prescription authorisation (M3b derived flags): the
+ * line's own product flag OR any selected component product's flag — a
+ * composite with an Rx component is an Rx line.
+ */
+export function cartLineRequiresPrescription(item: CartItemRow): boolean {
+  if (item.product.requiresPrescription) return true;
+  return item.components.some(
+    (component) => component.product.requiresPrescription,
+  );
 }
 
 /** A line qualifies for digital fulfilment purely from its (derived) flags. */

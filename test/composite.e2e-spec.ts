@@ -353,7 +353,9 @@ describe('Commerce composite, downloads & subscriptions (e2e)', () => {
       expect(line.unitPrice).toBe('5.00');
     });
 
-    it('answers 422 when a prescription option is selected', async () => {
+    it('answers 400 when a prescription option is selected without its pet (M5)', async () => {
+      // M3b's derived Rx flag still engages — now as the pet requirement:
+      // an Rx composite line must name its pet (400), never a silent add.
       const res = await post('/cart/items', tokenA)
         .send({
           quantity: 1,
@@ -373,10 +375,8 @@ describe('Commerce composite, downloads & subscriptions (e2e)', () => {
             },
           ],
         })
-        .expect(422);
-      expect((res.body as ErrorEnvelope).error.code).toBe(
-        'PRESCRIPTION_PENDING',
-      );
+        .expect(400);
+      expect((res.body as ErrorEnvelope).error.code).toBe('VALIDATION_FAILED');
     });
 
     it('answers 409 when a component cannot cover the line quantity', async () => {

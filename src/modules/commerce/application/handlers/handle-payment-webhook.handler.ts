@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { CommandHandler, ICommandHandler } from '@nestjs/cqrs';
 import { IdempotencyStore } from '../../../../shared/idempotency/idempotency.store';
+import { PharmacyFacadePort } from '../../../pharmacy-authorisation/application/facades/pharmacy-facade-port';
 import { PaymentRepository } from '../../infrastructure/repositories/payment.repository';
 import { HandlePaymentWebhookCommand } from '../commands/handle-payment-webhook.command';
 import { PaymentWebhookAckDto } from '../dto/commerce.responses.dto';
@@ -18,6 +19,7 @@ export class HandlePaymentWebhookHandler implements ICommandHandler<HandlePaymen
   constructor(
     private readonly payments: PaymentRepository,
     private readonly store: IdempotencyStore,
+    private readonly pharmacy: PharmacyFacadePort,
   ) {}
 
   async execute(
@@ -48,9 +50,16 @@ export class HandlePaymentWebhookHandler implements ICommandHandler<HandlePaymen
     }
 
     switch (command.event.type) {
-      case 'payment_intent.succeeded':
-        await this.payments.confirmCapture(payment.id, payment.orderId);
+      case 'payment_intent.succeeded': {
+        // Rx gate (Flow 4): an awaiting_prescription order may release to
+        // `paid` only when the pharmacy says every request is approved
+        // (`isOrderApproved` is true for orders without Rx lines).
+        const releaseHeld = await this.pharmacy.isApproved(payment.orderId);
+        await this.payments.confirmCapture(payment.id, payment.orderId, {
+          releaseHeld,
+        });
         break;
+      }
       case 'payment_intent.payment_failed':
         await this.payments.failPending(
           payment.id,

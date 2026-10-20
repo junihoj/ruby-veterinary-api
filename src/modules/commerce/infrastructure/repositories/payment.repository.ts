@@ -39,14 +39,24 @@ export class PaymentRepository {
 
   /**
    * payment_intent.succeeded (and subscription auto-orders): pending →
-   * captured, order → paid, reserved stock settles (quantity decremented,
-   * reservation released) per variant or composite component, one download
-   * grant per paid downloadable line (skipDuplicates on
-   * `uq_product_download_grants` makes re-issued captures no-ops), and a
-   * digital fulfilment completes immediately.
+   * captured, reserved stock settles (quantity decremented, reservation
+   * released) per variant or composite component, one download grant per
+   * paid downloadable line (skipDuplicates on `uq_product_download_grants`
+   * makes re-issued captures no-ops), and a digital fulfilment completes
+   * immediately.
+   *
+   * Order flip: `pending_payment → paid` always; an `awaiting_prescription`
+   * order only flips when `releaseHeld` is set — the handler asks the
+   * pharmacy facade whether every request is approved (Flow 4 invariant: no
+   * code path moves an Rx order to paid without the pharmacy's release).
+   *
    * Returns false when the payment was not pending (already processed).
    */
-  async confirmCapture(paymentId: string, orderId: string): Promise<boolean> {
+  async confirmCapture(
+    paymentId: string,
+    orderId: string,
+    options?: { releaseHeld?: boolean },
+  ): Promise<boolean> {
     return this.prisma.$transaction(async (tx) => {
       const claimed = await tx.payment.updateMany({
         where: { id: paymentId, status: 'pending' },
@@ -57,7 +67,9 @@ export class PaymentRepository {
       await tx.order.updateMany({
         where: {
           id: orderId,
-          status: { in: ['pending_payment', 'awaiting_prescription'] },
+          status: options?.releaseHeld
+            ? { in: ['pending_payment', 'awaiting_prescription'] }
+            : 'pending_payment',
         },
         data: { status: 'paid' },
       });
@@ -168,6 +180,86 @@ export class PaymentRepository {
         }
       }
       return true;
+    });
+  }
+
+  /**
+   * M5 pharmacy rejection (and the checkout hold-compensation path): an
+   * `awaiting_prescription` order is claimed to `cancelled`, its reserved
+   * stock released (exactly what was held — components or line variant),
+   * and its payments ride along: a pending intent fails with `failureCode`,
+   * captured money is refunded. Returns false when the order was no longer
+   * held (already paid, cancelled, or processed — idempotent consumers).
+   */
+  async cancelHeldOrder(
+    orderId: string,
+    failureCode: string,
+  ): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.order.updateMany({
+        where: { id: orderId, status: 'awaiting_prescription' },
+        data: { status: 'cancelled' },
+      });
+      if (claimed.count === 0) return false;
+
+      const items = await tx.orderItem.findMany({
+        where: { orderId },
+        select: {
+          variantId: true,
+          quantity: true,
+          components: { select: { variantId: true, quantity: true } },
+        },
+      });
+      for (const item of items) {
+        if (item.components.length > 0) {
+          for (const component of item.components) {
+            const units = component.quantity * item.quantity;
+            await tx.$executeRaw`
+              UPDATE commerce.product_variants
+                 SET stock_reserved = GREATEST(stock_reserved - ${units}, 0)
+               WHERE id = ${component.variantId}::uuid
+                 AND stock_reserved >= ${units}`;
+          }
+        } else if (item.variantId) {
+          await tx.$executeRaw`
+            UPDATE commerce.product_variants
+               SET stock_reserved = GREATEST(stock_reserved - ${item.quantity}, 0)
+             WHERE id = ${item.variantId}::uuid
+               AND stock_reserved >= ${item.quantity}`;
+        }
+      }
+
+      await tx.payment.updateMany({
+        where: { orderId, status: 'pending' },
+        data: { status: 'failed', failureCode },
+      });
+      await tx.payment.updateMany({
+        where: { orderId, status: 'captured' },
+        data: { status: 'refunded' },
+      });
+      return true;
+    });
+  }
+
+  /**
+   * PrescriptionApproved consumer (Flow 4): an `awaiting_prescription`
+   * order with captured money flips to `paid` — stock settled at capture.
+   * When the money is not in yet this is a no-op: the webhook's capture
+   * gate (`confirmCapture` `releaseHeld`) performs the flip once the
+   * pharmacy confirms approval, so both orderings converge here.
+   */
+  async releaseCapturedHeldOrder(orderId: string): Promise<boolean> {
+    return this.prisma.$transaction(async (tx) => {
+      const captured = await tx.payment.findFirst({
+        where: { orderId, status: 'captured' },
+        select: { id: true },
+      });
+      if (!captured) return false;
+      const claimed = await tx.order.updateMany({
+        where: { id: orderId, status: 'awaiting_prescription' },
+        data: { status: 'paid' },
+      });
+      return claimed.count > 0;
     });
   }
 

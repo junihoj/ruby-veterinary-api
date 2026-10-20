@@ -3,6 +3,8 @@ import { CqrsModule } from '@nestjs/cqrs';
 import { IdempotencyStore } from '../../shared/idempotency/idempotency.store';
 import { StorageModule } from '../../shared/storage/storage.module';
 import { ClinicContentModule } from '../clinic-content/clinic-content.module';
+import { ClientPatientRecordsModule } from '../client-patient-records/client-patient-records.module';
+import { PharmacyAuthorisationModule } from '../pharmacy-authorisation/pharmacy-authorisation.module';
 import { AdminCreateProductHandler } from './application/handlers/admin-create-product.handler';
 import { AdminUpdateProductHandler } from './application/handlers/admin-update-product.handler';
 import { AdminCreateDownloadFileHandler } from './application/handlers/admin-create-download-file.handler';
@@ -17,6 +19,8 @@ import { GetCartHandler } from './application/handlers/get-cart.handler';
 import { GetOrderHandler } from './application/handlers/get-order.handler';
 import { GetProductHandler } from './application/handlers/get-product.handler';
 import { HandlePaymentWebhookHandler } from './application/handlers/handle-payment-webhook.handler';
+import { HandlePrescriptionRejectedHandler } from './application/handlers/handle-prescription-rejected.handler';
+import { ReleaseRxOrderHandler } from './application/handlers/release-rx-order.handler';
 import { IssueDownloadUrlHandler } from './application/handlers/issue-download-url.handler';
 import { ListOrderDownloadsHandler } from './application/handlers/list-order-downloads.handler';
 import { ListOrdersHandler } from './application/handlers/list-orders.handler';
@@ -51,10 +55,22 @@ import { SubscriptionsController } from './presentation/subscriptions.controller
  * uploads), cart/quote/checkout with per-variant and per-component stock
  * reservation, mock payment gateway + signed webhook capture, orders,
  * order downloads with signed URLs, subscriptions with an in-process
- * refill timer (commerce.yaml + webhooks.yaml).
+ * refill timer (commerce.yaml + webhooks.yaml). M5 wires the Rx flow:
+ * checkout places the pharmacy hold through the PharmacyFacadePort
+ * (compensating revert when it cannot stand), the capture gate releases
+ * held orders only on pharmacy approval, and the PrescriptionApproved /
+ * PrescriptionRejected consumers converge both payment/approval orderings
+ * (Flow 4) — hence the PharmacyAuthorisationModule import. Add-to-cart
+ * pet-claim checks consume the ClientRecordsFacadePort.
  */
 @Module({
-  imports: [CqrsModule, ClinicContentModule, StorageModule],
+  imports: [
+    CqrsModule,
+    ClinicContentModule,
+    StorageModule,
+    ClientPatientRecordsModule,
+    PharmacyAuthorisationModule,
+  ],
   controllers: [
     CatalogController,
     CartController,
@@ -101,6 +117,9 @@ import { SubscriptionsController } from './presentation/subscriptions.controller
     AdminUpdateProductHandler,
     AdminCreateDownloadFileHandler,
     HandlePaymentWebhookHandler,
+    // M5 Rx flow: the first integration-event consumers in the codebase.
+    ReleaseRxOrderHandler,
+    HandlePrescriptionRejectedHandler,
   ],
   exports: [CommerceFacadePort],
 })

@@ -6,6 +6,8 @@ import { PrismaClient } from '../src/generated/prisma/client';
 import {
   CATALOG_MANAGER_EMAIL,
   CATALOG_MANAGER_PASSWORD,
+  VETERINARIAN_EMAIL,
+  VETERINARIAN_PASSWORD,
 } from './seed-credentials';
 
 /**
@@ -404,6 +406,37 @@ async function main(): Promise<void> {
       },
     });
     console.log('users: ensured catalog manager (practice_manager)');
+
+    // --- identity: veterinarian with a real password (M5 pharmacy) ---
+    // The pharmacy e2e logs in here: a veterinarian holds rx:review AND is
+    // the only role allowed to decide (PRESCRIBER_REQUIRED gate). Hashed at
+    // seed runtime like the catalog manager; the update branch rewrites the
+    // hash too, so previously seeded databases gain a working password.
+    const veterinarianHash = await argon2.hash(VETERINARIAN_PASSWORD);
+    await prisma.user.upsert({
+      where: { email: VETERINARIAN_EMAIL },
+      update: {
+        kind: 'staff',
+        status: 'active',
+        passwordHash: veterinarianHash,
+      },
+      create: {
+        email: VETERINARIAN_EMAIL,
+        passwordHash: veterinarianHash,
+        displayName: 'Dr. Ada Lovelace',
+        kind: 'staff',
+        status: 'active',
+        roles: {
+          create: [
+            {
+              role: { connect: { code: 'veterinarian' } },
+              grantedAt: new Date(),
+            },
+          ],
+        },
+      },
+    });
+    console.log('users: ensured veterinarian (Dr. Ada)');
 
     // --- commerce.products: one product of every shape (M3a storefront) ---
     // Shapes covered: simple, variable, grouped, external, composite, plus
