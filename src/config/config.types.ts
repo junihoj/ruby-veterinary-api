@@ -84,12 +84,188 @@ export class EnvVariables {
     message: 'SUBSCRIPTIONS_TICK_MS must be a non-negative integer.',
   })
   SUBSCRIPTIONS_TICK_MS: string = '60000';
+
+  // -------------------------------------------------------------------------
+  // M6a — hybrid messaging + RAG AI assistant (ADR-0017)
+  // -------------------------------------------------------------------------
+
+  // Dedicated least-privilege connection for the `ai_kb` schema. Optional so
+  // the app boots without the AI feature configured (the module fails closed
+  // with a clear "AI unavailable" reply rather than crashing the process).
+  @IsOptional()
+  @IsString()
+  AI_KB_DATABASE_URL?: string;
+
+  @IsOptional()
+  @IsString()
+  OPENAI_API_KEY?: string;
+
+  @IsOptional()
+  @IsString()
+  LLM_PROVIDER: string = 'openai';
+
+  @IsOptional()
+  @IsString()
+  LLM_CHAT_MODEL: string = 'gpt-4o-mini';
+
+  @IsOptional()
+  @IsString()
+  LLM_EMBEDDING_MODEL: string = 'text-embedding-3-small';
+
+  @IsOptional()
+  @Matches(/^\d+$/, { message: 'LLM_TIMEOUT_MS must be an integer.' })
+  LLM_TIMEOUT_MS: string = '20000';
+
+  @IsOptional()
+  @Matches(/^\d+$/, { message: 'RAG_TOP_K must be an integer.' })
+  RAG_TOP_K: string = '5';
+
+  @IsOptional()
+  @Matches(/^\d+(\.\d+)?$/, { message: 'RAG_MIN_SCORE must be a number.' })
+  RAG_MIN_SCORE: string = '0.35';
+
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  OCR_ENABLED: string = 'false';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'CHAT_SESSION_TTL_MINUTES must be an integer.',
+  })
+  CHAT_SESSION_TTL_MINUTES: string = '45';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'CHAT_HANDOFF_RETENTION_HOURS must be an integer.',
+  })
+  CHAT_HANDOFF_RETENTION_HOURS: string = '24';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'CHAT_MAX_MESSAGE_CHARS must be an integer.',
+  })
+  CHAT_MAX_MESSAGE_CHARS: string = '2000';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'CHAT_MAX_MESSAGES_PER_SESSION must be an integer.',
+  })
+  CHAT_MAX_MESSAGES_PER_SESSION: string = '60';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'CHAT_RATE_PER_IP_PER_MIN must be an integer.',
+  })
+  CHAT_RATE_PER_IP_PER_MIN: string = '20';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'CHAT_RATE_PER_SESSION_PER_MIN must be an integer.',
+  })
+  CHAT_RATE_PER_SESSION_PER_MIN: string = '10';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'CHAT_DAILY_REQUEST_CAP must be an integer.',
+  })
+  CHAT_DAILY_REQUEST_CAP: string = '2000';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'CHAT_DAILY_TOKEN_CAP must be an integer.',
+  })
+  CHAT_DAILY_TOKEN_CAP: string = '2000000';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'CHAT_SWEEPER_TICK_MS must be a non-negative integer.',
+  })
+  CHAT_SWEEPER_TICK_MS: string = '300000';
+
+  @IsOptional()
+  @Matches(/^\d+$/, {
+    message: 'AI_INGESTION_TICK_MS must be a non-negative integer.',
+  })
+  AI_INGESTION_TICK_MS: string = '10000';
+
+  @IsOptional()
+  @IsString()
+  CLINIC_PHONE: string = '+2348139640640';
+
+  @IsOptional()
+  @IsString()
+  CLINIC_CONTACT_URL: string = 'https://ruby-veterinary.com';
+
+  @IsOptional()
+  @IsString()
+  CLINIC_BOOKING_URL: string = 'https://calendly.com/ezeonyekachukwu97/30min';
+
+  @IsOptional()
+  @IsIn(['true', 'false'])
+  TRUST_PROXY: string = 'false';
+
+  // Telegram handoff (M6b). Empty until the provider is wired; the webhook
+  // route fails closed (401) when the secret is unset.
+  @IsOptional()
+  @IsString()
+  TELEGRAM_BOT_TOKEN?: string;
+
+  @IsOptional()
+  @IsString()
+  TELEGRAM_FORUM_GROUP_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  TELEGRAM_WEBHOOK_SECRET?: string;
+
+  // Optional Turnstile challenge; no-op when unset (api-specification §Rate).
+  @IsOptional()
+  @IsString()
+  TURNSTILE_SECRET_KEY?: string;
 }
 
 export interface S3Config {
   endpoint: string;
   accessKey: string;
   secretKey: string;
+}
+
+export interface AiConfig {
+  /** Dedicated least-privilege connection for `ai_kb` (no Prisma). */
+  kbDatabaseUrl?: string;
+  openAiApiKey?: string;
+  llmProvider: string;
+  chatModel: string;
+  embeddingModel: string;
+  llmTimeoutMs: number;
+  ragTopK: number;
+  ragMinScore: number;
+  ocrEnabled: boolean;
+  ingestionTickMs: number;
+}
+
+export interface ChatConfig {
+  sessionTtlMinutes: number;
+  handoffRetentionHours: number;
+  maxMessageChars: number;
+  maxMessagesPerSession: number;
+  ratePerIpPerMin: number;
+  ratePerSessionPerMin: number;
+  dailyRequestCap: number;
+  dailyTokenCap: number;
+  sweeperTickMs: number;
+}
+
+export interface ClinicContactConfig {
+  phone: string;
+  contactUrl: string;
+  bookingUrl: string;
+}
+
+export interface TelegramConfig {
+  botToken: string;
+  forumGroupId: string;
+  webhookSecret: string;
 }
 
 export interface AppConfig {
@@ -106,6 +282,12 @@ export interface AppConfig {
   paymentWebhookSecret?: string;
   subscriptionsTickMs: number;
   formAlertEmail: string;
+  ai: AiConfig;
+  chat: ChatConfig;
+  clinic: ClinicContactConfig;
+  telegram?: TelegramConfig;
+  trustProxy: boolean;
+  turnstileSecret?: string;
 }
 
 export function buildAppConfig(env: EnvVariables): AppConfig {
@@ -115,6 +297,17 @@ export function buildAppConfig(env: EnvVariables): AppConfig {
           endpoint: env.S3_ENDPOINT,
           accessKey: env.S3_ACCESS_KEY,
           secretKey: env.S3_SECRET_KEY,
+        }
+      : undefined;
+
+  const telegram =
+    env.TELEGRAM_BOT_TOKEN &&
+    env.TELEGRAM_FORUM_GROUP_ID &&
+    env.TELEGRAM_WEBHOOK_SECRET
+      ? {
+          botToken: env.TELEGRAM_BOT_TOKEN,
+          forumGroupId: env.TELEGRAM_FORUM_GROUP_ID,
+          webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
         }
       : undefined;
 
@@ -136,6 +329,41 @@ export function buildAppConfig(env: EnvVariables): AppConfig {
       : {}),
     subscriptionsTickMs: Number(env.SUBSCRIPTIONS_TICK_MS),
     formAlertEmail: env.FORM_ALERT_EMAIL,
+    ai: {
+      ...(env.AI_KB_DATABASE_URL
+        ? { kbDatabaseUrl: env.AI_KB_DATABASE_URL }
+        : {}),
+      ...(env.OPENAI_API_KEY ? { openAiApiKey: env.OPENAI_API_KEY } : {}),
+      llmProvider: env.LLM_PROVIDER,
+      chatModel: env.LLM_CHAT_MODEL,
+      embeddingModel: env.LLM_EMBEDDING_MODEL,
+      llmTimeoutMs: Number(env.LLM_TIMEOUT_MS),
+      ragTopK: Number(env.RAG_TOP_K),
+      ragMinScore: Number(env.RAG_MIN_SCORE),
+      ocrEnabled: env.OCR_ENABLED === 'true',
+      ingestionTickMs: Number(env.AI_INGESTION_TICK_MS),
+    },
+    chat: {
+      sessionTtlMinutes: Number(env.CHAT_SESSION_TTL_MINUTES),
+      handoffRetentionHours: Number(env.CHAT_HANDOFF_RETENTION_HOURS),
+      maxMessageChars: Number(env.CHAT_MAX_MESSAGE_CHARS),
+      maxMessagesPerSession: Number(env.CHAT_MAX_MESSAGES_PER_SESSION),
+      ratePerIpPerMin: Number(env.CHAT_RATE_PER_IP_PER_MIN),
+      ratePerSessionPerMin: Number(env.CHAT_RATE_PER_SESSION_PER_MIN),
+      dailyRequestCap: Number(env.CHAT_DAILY_REQUEST_CAP),
+      dailyTokenCap: Number(env.CHAT_DAILY_TOKEN_CAP),
+      sweeperTickMs: Number(env.CHAT_SWEEPER_TICK_MS),
+    },
+    clinic: {
+      phone: env.CLINIC_PHONE,
+      contactUrl: env.CLINIC_CONTACT_URL,
+      bookingUrl: env.CLINIC_BOOKING_URL,
+    },
+    ...(telegram ? { telegram } : {}),
+    trustProxy: env.TRUST_PROXY === 'true',
+    ...(env.TURNSTILE_SECRET_KEY
+      ? { turnstileSecret: env.TURNSTILE_SECRET_KEY }
+      : {}),
   });
 }
 

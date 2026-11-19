@@ -14,6 +14,7 @@ import { CareCoordinationModule } from './modules/care-coordination/care-coordin
 import { ClientPatientRecordsModule } from './modules/client-patient-records/client-patient-records.module';
 import { CommerceModule } from './modules/commerce/commerce.module';
 import { PharmacyAuthorisationModule } from './modules/pharmacy-authorisation/pharmacy-authorisation.module';
+import { AiAssistantModule } from './modules/ai-assistant/ai-assistant.module';
 import { CareMessagingModule } from './modules/care-messaging/care-messaging.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
 import { OperationsModule } from './modules/operations/operations.module';
@@ -40,6 +41,7 @@ import { OperationsModule } from './modules/operations/operations.module';
     ClientPatientRecordsModule,
     CommerceModule,
     PharmacyAuthorisationModule,
+    AiAssistantModule,
     CareMessagingModule,
     NotificationsModule,
     OperationsModule,

@@ -19,6 +19,7 @@ const contextNames = [
   'client-patient-records',
   'commerce',
   'pharmacy-authorisation',
+  'ai-assistant',
   'care-messaging',
   'notifications',
   'operations',

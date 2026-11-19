@@ -20,6 +20,33 @@ const config = {
   corsOrigins: [],
   subscriptionsTickMs: 0,
   formAlertEmail: 'frontdesk@ruby-veterinary.example.com',
+  ai: {
+    llmProvider: 'openai',
+    chatModel: 'gpt-4o-mini',
+    embeddingModel: 'text-embedding-3-small',
+    llmTimeoutMs: 20_000,
+    ragTopK: 5,
+    ragMinScore: 0.35,
+    ocrEnabled: false,
+    ingestionTickMs: 0,
+  },
+  chat: {
+    sessionTtlMinutes: 45,
+    handoffRetentionHours: 24,
+    maxMessageChars: 2_000,
+    maxMessagesPerSession: 60,
+    ratePerIpPerMin: 20,
+    ratePerSessionPerMin: 10,
+    dailyRequestCap: 2_000,
+    dailyTokenCap: 2_000_000,
+    sweeperTickMs: 0,
+  },
+  clinic: {
+    phone: '+2348139640640',
+    contactUrl: 'https://ruby-veterinary.com',
+    bookingUrl: 'https://calendly.com/ezeonyekachukwu97/30min',
+  },
+  trustProxy: false,
 };
 
 function httpContext(req: unknown): ExecutionContext {

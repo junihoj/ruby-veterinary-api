@@ -266,6 +266,60 @@ function main(): void {
       '/prescriptions/{id}/query',
       ['queryPrescription', '200', '400', '401', '403', '404', '409'],
     ],
+    // messaging.yaml (M6a — chat sessions + admin AI documents; M6b adds the
+    // Telegram webhook)
+    [
+      'POST',
+      '/chat/session',
+      ['createWebChatSession', '200', '403', '429'],
+    ],
+    [
+      'POST',
+      '/chat/session/mobile',
+      ['createMobileChatSession', '200', '403', '429'],
+    ],
+    ['POST', '/chat/token/refresh', ['refreshMobileToken', '200', '401']],
+    ['GET', '/chat/messages', ['getChatMessages', '200', '401']],
+    [
+      'GET',
+      '/admin/ai/documents',
+      ['listDocuments', '200', '403'],
+    ],
+    [
+      'POST',
+      '/admin/ai/documents',
+      ['ingestDocument', '201', '400', '403', '409'],
+    ],
+    [
+      'GET',
+      '/admin/ai/documents/{documentId}',
+      ['getDocument', '200', '404'],
+    ],
+    [
+      'PUT',
+      '/admin/ai/documents/{documentId}',
+      ['updateDocument', '200', '404'],
+    ],
+    [
+      'DELETE',
+      '/admin/ai/documents/{documentId}',
+      ['deleteDocument', '204', '404'],
+    ],
+    [
+      'POST',
+      '/admin/ai/documents/{documentId}/approve',
+      ['approveDocument', '200', '404', '409'],
+    ],
+    [
+      'POST',
+      '/admin/ai/documents/{documentId}/reindex',
+      ['reindexDocument', '202', '404'],
+    ],
+    [
+      'POST',
+      '/admin/ai/documents/{documentId}/archive',
+      ['archiveDocument', '200', '404'],
+    ],
   ];
 
   for (const [method, path, values] of expectedOps) {

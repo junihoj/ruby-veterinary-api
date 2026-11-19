@@ -56,15 +56,16 @@ describe('identity/domain', () => {
       expect(permissionsForRoles(['client'])).toEqual([]);
     });
 
-    it('maps veterinarian to rx:review and care:write', () => {
+    it('maps veterinarian to rx:review, care:write, and ai:admin', () => {
       expect(permissionsForRoles(['veterinarian']).sort()).toEqual(
-        ['care:write', 'rx:review'].sort(),
+        ['ai:admin', 'care:write', 'rx:review'].sort(),
       );
     });
 
-    it('maps practice_manager to ops + Rx review + catalog + care writes', () => {
+    it('maps practice_manager to ops + Rx review + catalog + care writes + ai:admin', () => {
       expect(permissionsForRoles(['practice_manager']).sort()).toEqual(
         [
+          'ai:admin',
           'catalog:write',
           'care:write',
           'ops:inbox',
@@ -92,6 +93,7 @@ describe('identity/domain', () => {
       ]);
       expect(permissions.sort()).toEqual(
         [
+          'ai:admin',
           'catalog:write',
           'care:write',
           'ops:inbox',

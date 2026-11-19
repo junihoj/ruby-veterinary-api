@@ -1078,52 +1078,117 @@ model PatientAssociation {
 // Schema: messaging (data-model/care-messaging.md)
 // ---------------------------------------------------------------------------
 
-/// messaging.conversations — WhatsApp threads (bot/handover state machine)
+/// messaging.conversations — one thread per contact identity per channel
+/// (web chat, Telegram, future WhatsApp). M6 generalised from WhatsApp-only.
 model Conversation {
-  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  waPhoneNumber  String    @map("wa_phone_number") @db.Text // clinic Business API number
-  contactPhone   String    @map("contact_phone") @db.Text // owner's WhatsApp number
-  contactName    String?   @map("contact_name") @db.Text
-  clientId       String?   @map("client_id") @db.Uuid // cross-schema → clients.id
-  userId         String?   @map("user_id") @db.Uuid // cross-schema
-  direction      String    @default("inbound") @db.Text // inbound | outbound
-  status         String    @default("bot_active") @db.Text // bot_active | awaiting_handover | human_active | closed | blocked
-  emergencyFlag  Boolean   @map("emergency_flag") @default(false)
-  lastInboundAt  DateTime  @map("last_inbound_at") @db.Timestamptz
-  lastOutboundAt DateTime? @map("last_outbound_at") @db.Timestamptz
-  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt      DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channel         String    @db.Text // web_chat | telegram | whatsapp
+  contactIdentity String    @map("contact_identity") @db.Text
+  waPhoneNumber   String?   @map("wa_phone_number") @db.Text // legacy WhatsApp Business number
+  contactPhone    String?   @map("contact_phone") @db.Text // legacy owner WhatsApp number
+  contactName     String?   @map("contact_name") @db.Text
+  clientId        String?   @map("client_id") @db.Uuid // cross-schema → clients.id
+  userId          String?   @map("user_id") @db.Uuid // cross-schema
+  direction       String    @default("inbound") @db.Text // inbound | outbound
+  status          String    @default("bot_active") @db.Text // bot_active | awaiting_handover | human_active | closed | blocked
+  emergencyFlag   Boolean   @default(false) @map("emergency_flag")
+  lastInboundAt   DateTime  @map("last_inbound_at") @db.Timestamptz
+  lastOutboundAt  DateTime? @map("last_outbound_at") @db.Timestamptz
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz
 
-  messages    InboxMessage[]
-  menuStates  ConversationMenuState[]
-  handovers   HandoverSession[]
+  messages        InboxMessage[]
+  menuStates      ConversationMenuState[]
+  handovers       HandoverSession[]
+  chatSessions    ChatSession[]
+  providerThreads ProviderThread[]
 
-  @@index([contactPhone, lastInboundAt(sort: Desc)], map: "ix_conversations_contact")
-  @@index([status, lastInboundAt], map: "ix_conversations_status")
+  @@unique([channel, contactIdentity], map: "uq_conversations_channel_identity")
+  @@index([channel, status, lastInboundAt(sort: Desc)], map: "ix_conversations_channel")
   @@index([emergencyFlag, status], map: "ix_conversations_emergency")
   @@map("conversations")
   @@schema("messaging")
 }
 
-/// messaging.inbox_messages — one chronological stream per conversation (dedup on provider id)
+/// messaging.inbox_messages — one chronological stream per conversation,
+/// extended with per-session seq ordering, frame type, and AI citations.
 model InboxMessage {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId    String   @map("conversation_id") @db.Uuid
+  sessionId         String?  @map("session_id") @db.Uuid
+  seq               BigInt?
+  frameType         String?  @map("frame_type") @db.Text // token | staff_message | handoff | system
+  providerMessageId String?  @map("provider_message_id") @db.Text
+  direction         String   @db.Text // inbound | outbound
+  senderType        String   @map("sender_type") @db.Text // visitor | owner | bot | staff | system
+  senderUserId      String?  @map("sender_user_id") @db.Uuid // cross-schema (staff sends)
+  bodyText          String   @map("body_text") @db.Text
+  mediaObjectKey    String?  @map("media_object_key") @db.Text
+  mediaMime         String?  @map("media_mime") @db.Text
+  citations         Json?
+  clientType        String?  @map("client_type") @db.Text // web | mobile
+  status            String   @default("received") @db.Text // received | sent | delivered | read | failed
+  dedupeKey         String   @unique(map: "uq_inbox_messages_dedupe") @map("dedupe_key") @db.Text
+  requestId         String?  @map("request_id") @db.Text
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  conversation Conversation @relation(fields: [conversationId], references: [id])
+  session      ChatSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, seq], map: "uq_inbox_messages_session_seq")
+  @@index([conversationId, createdAt], map: "ix_inbox_messages_conversation")
+  @@map("inbox_messages")
+  @@schema("messaging")
+}
+
+/// messaging.chat_sessions — web/mobile chat sessions (cookie or bearer auth)
+model ChatSession {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  tokenHash        String    @unique(map: "ix_chat_sessions_token") @map("token_hash") @db.Text
+  clientType       String    @map("client_type") @db.Text // web | mobile
+  conversationId   String    @map("conversation_id") @db.Uuid
+  lastSeq          BigInt    @default(0) @map("last_seq")
+  status           String    @default("active") @db.Text // active | handoff | expired | closed
+  lastActivityAt   DateTime  @default(now()) @map("last_activity_at") @db.Timestamptz
+  handoffStartedAt DateTime? @map("handoff_started_at") @db.Timestamptz
+  expiresAt        DateTime  @map("expires_at") @db.Timestamptz
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  conversation Conversation   @relation(fields: [conversationId], references: [id])
+  messages     InboxMessage[]
+
+  @@index([expiresAt], map: "ix_chat_sessions_expiry")
+  @@map("chat_sessions")
+  @@schema("messaging")
+}
+
+/// messaging.provider_threads — conversation ↔ external provider thread
+/// (Telegram forum topic, future WhatsApp conversation id).
+model ProviderThread {
   id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   conversationId   String   @map("conversation_id") @db.Uuid
-  providerMessageId String  @map("provider_message_id") @db.Text
-  direction        String   @db.Text // inbound | outbound
-  senderType       String   @map("sender_type") @db.Text // owner | bot | staff
-  senderUserId     String?  @map("sender_user_id") @db.Uuid // cross-schema (staff sends)
-  bodyText         String   @map("body_text") @db.Text
-  mediaObjectKey   String?  @map("media_object_key") @db.Text
-  mediaMime        String?  @map("media_mime") @db.Text
-  status           String   @default("received") @db.Text // received | sent | delivered | read | failed
-  dedupeKey        String   @unique(map: "uq_inbox_messages_dedupe") @map("dedupe_key") @db.Text
+  provider         String   @db.Text // telegram | whatsapp
+  providerThreadId String   @map("provider_thread_id") @db.Text
+  metadata         Json?
   createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   conversation Conversation @relation(fields: [conversationId], references: [id])
 
-  @@index([conversationId, createdAt], map: "ix_inbox_messages_conversation")
-  @@map("inbox_messages")
+  @@unique([conversationId, provider], map: "uq_provider_threads_conv_provider")
+  @@unique([provider, providerThreadId], map: "uq_provider_threads_provider_id")
+  @@map("provider_threads")
+  @@schema("messaging")
+}
+
+/// messaging.chat_usage_daily — AI request/token/cost ledger (one row per day)
+model ChatUsageDaily {
+  day              DateTime @id @db.Date
+  requests         Int      @default(0)
+  promptTokens     Int      @default(0) @map("prompt_tokens")
+  completionTokens Int      @default(0) @map("completion_tokens")
+  costUsd          Decimal  @default(0) @map("cost_usd") @db.Decimal(10, 6)
+
+  @@map("chat_usage_daily")
   @@schema("messaging")
 }
 
@@ -1180,16 +1245,20 @@ model ConversationMenuState {
 
 /// messaging.handover_sessions — bot→human handover claims (first claim wins; partial index in raw SQL)
 model HandoverSession {
-  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  conversationId      String    @map("conversation_id") @db.Uuid
-  requestedReason     String    @map("requested_reason") @db.Text // owner_request | panic | bot_unresolved | menu_complete
-  requestedAt         DateTime  @map("requested_at") @db.Timestamptz
-  claimedBy           String?   @map("claimed_by") @db.Uuid // cross-schema → staff user
-  claimedAt           DateTime? @map("claimed_at") @db.Timestamptz
-  status              String    @default("requested") @db.Text // requested | claimed | released | resolved
-  resolvedAt          DateTime? @map("resolved_at") @db.Timestamptz
-  appointmentRequestId String?  @map("appointment_request_id") @db.Uuid // cross-schema
-  createdAt           DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  id                   String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  conversationId       String    @map("conversation_id") @db.Uuid
+  provider             String    @default("telegram") @db.Text // telegram | whatsapp
+  providerThreadId     String?   @map("provider_thread_id") @db.Text
+  requestedReason      String    @map("requested_reason") @db.Text // owner_request | panic | bot_unresolved | menu_complete
+  requestedAt          DateTime  @map("requested_at") @db.Timestamptz
+  claimedBy            String?   @map("claimed_by") @db.Uuid // cross-schema → staff user
+  claimedAt            DateTime? @map("claimed_at") @db.Timestamptz
+  status               String    @default("requested") @db.Text // requested | claimed | released | resolved
+  resolvedAt           DateTime? @map("resolved_at") @db.Timestamptz
+  closedAt             DateTime? @map("closed_at") @db.Timestamptz
+  closedReason         String?   @map("closed_reason") @db.Text
+  appointmentRequestId String?   @map("appointment_request_id") @db.Uuid // cross-schema
+  createdAt            DateTime  @default(now()) @map("created_at") @db.Timestamptz
 
   conversation Conversation @relation(fields: [conversationId], references: [id])
 
