@@ -316,7 +316,7 @@ export function buildAppConfig(env: EnvVariables): AppConfig {
           forumGroupId: env.TELEGRAM_FORUM_GROUP_ID,
           webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
           apiBaseUrl:
-            env.TELEGRAM_API_BASE_URL?.replace(/\/+$/, '') ??
+            env.TELEGRAM_API_BASE_URL?.trim().replace(/\/+$/, '') ||
             'https://api.telegram.org',
         }
       : undefined;
