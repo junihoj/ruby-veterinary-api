@@ -218,6 +218,12 @@ export class EnvVariables {
   @IsString()
   TELEGRAM_WEBHOOK_SECRET?: string;
 
+  // Bot API origin. Defaults to the public Telegram API; tests point this at a
+  // local mock server so the real adapter code path is exercised offline.
+  @IsOptional()
+  @IsString()
+  TELEGRAM_API_BASE_URL?: string;
+
   // Optional Turnstile challenge; no-op when unset (api-specification §Rate).
   @IsOptional()
   @IsString()
@@ -266,6 +272,7 @@ export interface TelegramConfig {
   botToken: string;
   forumGroupId: string;
   webhookSecret: string;
+  apiBaseUrl: string;
 }
 
 export interface AppConfig {
@@ -308,6 +315,9 @@ export function buildAppConfig(env: EnvVariables): AppConfig {
           botToken: env.TELEGRAM_BOT_TOKEN,
           forumGroupId: env.TELEGRAM_FORUM_GROUP_ID,
           webhookSecret: env.TELEGRAM_WEBHOOK_SECRET,
+          apiBaseUrl:
+            env.TELEGRAM_API_BASE_URL?.replace(/\/+$/, '') ??
+            'https://api.telegram.org',
         }
       : undefined;
 

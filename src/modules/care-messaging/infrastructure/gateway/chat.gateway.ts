@@ -138,8 +138,16 @@ export class ChatGateway implements OnGatewayConnection, OnGatewayDisconnect {
     return null;
   }
 
+  /**
+   * Bridge entry point for non-WS transports (Telegram webhook). Broadcasts to
+   * every socket currently attached to the visitor's session.
+   */
+  broadcastToSession(sessionId: string, frame: ChatFrame): void {
+    this.broadcast(sessionId, frame);
+  }
+
   private broadcast(sessionId: string, frame: ChatFrame): void {
-    this.server.to(roomFor(sessionId)).emit(frame.type, frame);
+    this.server?.to(roomFor(sessionId)).emit(frame.type, frame);
   }
 
   private errorFrame(seq: number, code: string): ChatFrame {

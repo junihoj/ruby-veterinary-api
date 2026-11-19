@@ -48,7 +48,7 @@ export class ReplayChatHandler {
       return [{ seq: row.seq, type: 'notice', text: row.bodyText }];
     }
     if (row.frameType === 'handoff') {
-      return [{ seq: row.seq, type: 'handoff', state: this.handoffState(row) }];
+      return [{ seq: row.seq, type: 'handoff', ...this.handoffPayload(row) }];
     }
     if (row.frameType === 'staff_message') {
       return [
@@ -77,20 +77,30 @@ export class ReplayChatHandler {
     ];
   }
 
-  private handoffState(row: ChatMessageState): HandoffFrame['state'] {
+  private handoffPayload(
+    row: ChatMessageState,
+  ): Pick<HandoffFrame, 'state' | 'staffName'> {
     try {
-      const parsed = JSON.parse(row.bodyText) as { state?: string };
+      const parsed = JSON.parse(row.bodyText) as {
+        state?: string;
+        staffName?: string;
+      };
       if (
         parsed.state === 'requested' ||
         parsed.state === 'accepted' ||
         parsed.state === 'closed'
       ) {
-        return parsed.state;
+        return {
+          state: parsed.state,
+          ...(typeof parsed.staffName === 'string' && parsed.staffName
+            ? { staffName: parsed.staffName }
+            : {}),
+        };
       }
     } catch {
       // fall through
     }
-    return 'requested';
+    return { state: 'requested' };
   }
 }
 

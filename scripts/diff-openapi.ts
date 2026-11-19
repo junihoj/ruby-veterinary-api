@@ -320,6 +320,8 @@ function main(): void {
       '/admin/ai/documents/{documentId}/archive',
       ['archiveDocument', '200', '404'],
     ],
+    // messaging.yaml (M6b — Telegram staff handoff webhook)
+    ['POST', '/webhooks/telegram', ['telegramWebhook', '200', '401']],
   ];
 
   for (const [method, path, values] of expectedOps) {

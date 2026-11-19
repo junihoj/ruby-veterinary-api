@@ -18,6 +18,16 @@ export function originNotAllowed(): HttpException {
   );
 }
 
+export function invalidSecret(): HttpException {
+  return new HttpException(
+    {
+      code: 'INVALID_SECRET',
+      message: 'Webhook secret is missing or invalid.',
+    },
+    HttpStatus.UNAUTHORIZED,
+  );
+}
+
 export function validationFailed(message: string): HttpException {
   return new HttpException(
     { code: 'VALIDATION_FAILED', message },
@@ -44,6 +54,7 @@ export const WS_ERROR = {
   MESSAGE_TOO_LONG: 'MESSAGE_TOO_LONG',
   SESSION_FULL: 'SESSION_FULL',
   UNAUTHORIZED: 'UNAUTHORIZED',
+  PROVIDER_ERROR: 'PROVIDER_ERROR',
   INTERNAL: 'INTERNAL',
 } as const;
 

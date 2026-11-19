@@ -3,6 +3,12 @@ import { PrismaService } from '../../../../prisma/prisma.service';
 import type { ChatSession } from '../../../../generated/prisma/client';
 import type { ChatSessionState } from '../../application/dto/chat.types';
 
+export interface ExpiredChatSession {
+  id: string;
+  conversationId: string;
+  wasHandoff: boolean;
+}
+
 @Injectable()
 export class ChatSessionRepository {
   constructor(private readonly prisma: PrismaService) {}
@@ -76,19 +82,53 @@ export class ChatSessionRepository {
     });
   }
 
+  async markClosed(id: string): Promise<void> {
+    await this.prisma.chatSession.update({
+      where: { id },
+      data: { status: 'closed' },
+    });
+  }
+
+  /** Extends the 24 h handoff window after any transcript activity. */
+  async extendHandoff(id: string, expiresAt: Date): Promise<void> {
+    await this.prisma.chatSession.update({
+      where: { id },
+      data: { expiresAt, lastActivityAt: new Date() },
+    });
+  }
+
+  /**
+   * Latest usable session for a conversation. Handoff bridging uses this to
+   * route a Telegram reply back to the visitor's open widget.
+   */
+  async findActiveByConversation(
+    conversationId: string,
+    statuses: string[] = ['active', 'handoff'],
+  ): Promise<ChatSessionState | null> {
+    const row = await this.prisma.chatSession.findFirst({
+      where: {
+        conversationId,
+        status: { in: statuses },
+        expiresAt: { gt: new Date() },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+    return row ? this.map(row) : null;
+  }
+
   /**
    * Deletes messages for every session whose TTL elapsed and marks the session
    * `expired` (kept so a reconnect can receive the `expired` frame).
    */
-  async sweep(now: Date): Promise<number> {
+  async sweep(now: Date): Promise<ExpiredChatSession[]> {
     const expired = await this.prisma.chatSession.findMany({
       where: {
         status: { in: ['active', 'handoff'] },
         expiresAt: { lt: now },
       },
-      select: { id: true },
+      select: { id: true, conversationId: true, status: true },
     });
-    if (expired.length === 0) return 0;
+    if (expired.length === 0) return [];
     const ids = expired.map((row) => row.id);
     await this.prisma.$transaction([
       this.prisma.inboxMessage.deleteMany({
@@ -99,6 +139,10 @@ export class ChatSessionRepository {
         data: { status: 'expired', lastSeq: 0 },
       }),
     ]);
-    return ids.length;
+    return expired.map((row) => ({
+      id: row.id,
+      conversationId: row.conversationId,
+      wasHandoff: row.status === 'handoff',
+    }));
   }
 }

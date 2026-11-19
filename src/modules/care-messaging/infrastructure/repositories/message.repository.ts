@@ -101,4 +101,17 @@ export class MessageRepository {
   async count(sessionId: string): Promise<number> {
     return this.prisma.inboxMessage.count({ where: { sessionId } });
   }
+
+  /** Most recent visitor text, used for the Telegram handoff intro. */
+  async lastVisitorText(sessionId: string): Promise<string | null> {
+    const row = await this.prisma.inboxMessage.findFirst({
+      where: {
+        sessionId,
+        senderType: { in: ['visitor', 'owner'] },
+        frameType: 'token',
+      },
+      orderBy: { seq: 'desc' },
+    });
+    return row?.bodyText.trim() || null;
+  }
 }

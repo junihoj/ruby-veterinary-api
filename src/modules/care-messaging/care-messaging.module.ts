@@ -8,6 +8,8 @@ import { ReplayChatHandler } from './application/handlers/replay-chat.handler';
 import { ListChatMessagesHandler } from './application/handlers/list-chat-messages.handler';
 import { SendChatMessageHandler } from './application/handlers/send-chat-message.handler';
 import { RequestChatHandoffHandler } from './application/handlers/request-chat-handoff.handler';
+import { TelegramUpdateHandler } from './application/handlers/telegram-update.handler';
+import { MessagingProviderPort } from './application/ports/messaging-provider-port';
 import { ChatSessionSweeper } from './application/jobs/chat-session-sweeper.service';
 import { ChatSessionAuthService } from './application/services/chat-session-auth.service';
 import { ChatRateLimiter } from './application/services/rate-limiter.service';
@@ -20,18 +22,21 @@ import { ConversationRepository } from './infrastructure/repositories/conversati
 import { HandoverRepository } from './infrastructure/repositories/handover.repository';
 import { MessageRepository } from './infrastructure/repositories/message.repository';
 import { ProviderThreadRepository } from './infrastructure/repositories/provider-thread.repository';
+import { WebhookUpdateRepository } from './infrastructure/repositories/webhook-update.repository';
+import { TelegramProviderAdapter } from './infrastructure/providers/telegram-provider.adapter';
 import { ChatController } from './presentation/chat.controller';
 import { ChatSessionGuard } from './presentation/chat-session.guard';
+import { TelegramWebhookController } from './presentation/webhooks/telegram.webhook.controller';
 
 /**
- * CareMessaging bounded context (schema: messaging) — M6a hybrid chat.
- * Owns web/mobile sessions, the Socket.IO transport, deterministic safety
- * classification, RAG answer orchestration, and session expiry. Staff handoff
- * bridging (Telegram) lands in M6b.
+ * CareMessaging bounded context (schema: messaging) — M6a hybrid chat + M6b
+ * Telegram staff handoff. Owns web/mobile sessions, the Socket.IO transport,
+ * deterministic safety classification, RAG answer orchestration, session
+ * expiry, and the provider-swappable handoff bridge.
  */
 @Module({
   imports: [AiAssistantModule],
-  controllers: [ChatController],
+  controllers: [ChatController, TelegramWebhookController],
   providers: [
     ConversationRepository,
     ChatSessionRepository,
@@ -40,6 +45,7 @@ import { ChatSessionGuard } from './presentation/chat-session.guard';
     BotRuleRepository,
     HandoverRepository,
     ProviderThreadRepository,
+    WebhookUpdateRepository,
     ChatSessionAuthService,
     ChatRateLimiter,
     MessageClassifierService,
@@ -49,6 +55,12 @@ import { ChatSessionGuard } from './presentation/chat-session.guard';
     ListChatMessagesHandler,
     SendChatMessageHandler,
     RequestChatHandoffHandler,
+    TelegramUpdateHandler,
+    TelegramProviderAdapter,
+    {
+      provide: MessagingProviderPort,
+      useExisting: TelegramProviderAdapter,
+    },
     ChatSessionSweeper,
     ChatSessionGuard,
     ChatGateway,

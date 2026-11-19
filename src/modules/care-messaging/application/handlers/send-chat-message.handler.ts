@@ -7,6 +7,11 @@ import {
 import { ChatSessionRepository } from '../../infrastructure/repositories/chat-session.repository';
 import { ChatUsageRepository } from '../../infrastructure/repositories/chat-usage.repository';
 import { MessageRepository } from '../../infrastructure/repositories/message.repository';
+import { ProviderThreadRepository } from '../../infrastructure/repositories/provider-thread.repository';
+import {
+  MessagingProviderPort,
+  type ProviderThreadRef,
+} from '../ports/messaging-provider-port';
 import { ChatRateLimiter } from '../services/rate-limiter.service';
 import { MessageClassifierService } from '../services/message-classifier.service';
 import {
@@ -34,7 +39,10 @@ export class SendChatMessageHandler {
     private readonly usage: ChatUsageRepository,
     private readonly classifier: MessageClassifierService,
     private readonly limiter: ChatRateLimiter,
+    private readonly providerThreads: ProviderThreadRepository,
     @Inject(AiAssistantPort) private readonly ai: AiAssistantPort,
+    @Inject(MessagingProviderPort)
+    private readonly provider: MessagingProviderPort,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
@@ -109,8 +117,17 @@ export class SendChatMessageHandler {
     });
     emit({ seq: userMessage.seq, type: 'done', messageSeq: userMessage.seq });
 
-    // A human has taken over: M6b relays to Telegram; the bot stays silent.
-    if (session.status === 'handoff') return;
+    // A human has taken over: relay to the provider thread; the bot stays silent.
+    if (session.status === 'handoff') {
+      await this.sessions.extendHandoff(
+        session.id,
+        new Date(
+          Date.now() + this.config.chat.handoffRetentionHours * 3_600_000,
+        ),
+      );
+      await this.relayToStaff(context, text, emit);
+      return;
+    }
 
     const classification = this.classifier.classify(text);
     if (classification === 'emergency') {
@@ -210,6 +227,37 @@ export class SendChatMessageHandler {
       await this.usage.record(result.promptTokens, result.completionTokens);
     }
     await this.sessions.touch(session.id);
+  }
+
+  private async relayToStaff(
+    context: ResolvedChatSession,
+    text: string,
+    emit: ChatEmitter['emit'],
+  ): Promise<void> {
+    if (!this.provider.isConfigured()) {
+      emit(this.error(0, WS_ERROR.PROVIDER_ERROR));
+      return;
+    }
+
+    const thread = await this.providerThreads.findByConversation(
+      context.conversationId,
+      this.provider.provider,
+    );
+    if (!thread) {
+      emit(this.error(0, WS_ERROR.PROVIDER_ERROR));
+      return;
+    }
+
+    const ref: ProviderThreadRef = {
+      provider: thread.provider,
+      threadId: thread.providerThreadId,
+      metadata: (thread.metadata as Record<string, unknown> | null) ?? {},
+    };
+    try {
+      await this.provider.sendMessage(ref, `Visitor: ${text}`);
+    } catch {
+      emit(this.error(0, WS_ERROR.PROVIDER_ERROR));
+    }
   }
 
   private async fixedResponse(

@@ -25,6 +25,16 @@ export class ProviderThreadRepository {
     });
   }
 
+  async updateMetadata(
+    id: string,
+    metadata: Record<string, unknown>,
+  ): Promise<void> {
+    await this.prisma.providerThread.update({
+      where: { id },
+      data: { metadata: metadata as Prisma.InputJsonValue },
+    });
+  }
+
   async upsert(
     conversationId: string,
     provider: string,

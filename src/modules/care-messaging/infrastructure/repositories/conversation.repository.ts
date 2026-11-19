@@ -47,4 +47,11 @@ export class ConversationRepository {
       data: { lastInboundAt: new Date() },
     });
   }
+
+  async touchOutbound(id: string): Promise<void> {
+    await this.prisma.conversation.update({
+      where: { id },
+      data: { lastOutboundAt: new Date() },
+    });
+  }
 }

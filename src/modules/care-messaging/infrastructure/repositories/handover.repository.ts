@@ -51,6 +51,32 @@ export class HandoverRepository {
     return result.count === 1;
   }
 
+  /**
+   * First-claim-wins for provider-native staff (Telegram): `claimed_by` is a
+   * cross-schema app-user UUID, so the external identity lives in provider
+   * thread metadata instead.
+   */
+  async claimByProvider(id: string): Promise<boolean> {
+    const result = await this.prisma.handoverSession.updateMany({
+      where: { id, status: 'requested' },
+      data: { status: 'claimed', claimedAt: new Date() },
+    });
+    return result.count === 1;
+  }
+
+  async resolve(id: string, reason: string): Promise<void> {
+    const now = new Date();
+    await this.prisma.handoverSession.update({
+      where: { id },
+      data: {
+        status: 'resolved',
+        resolvedAt: now,
+        closedAt: now,
+        closedReason: reason,
+      },
+    });
+  }
+
   async findByThreadId(
     provider: string,
     providerThreadId: string,

@@ -1180,7 +1180,21 @@ model ProviderThread {
   @@schema("messaging")
 }
 
-/// messaging.chat_usage_daily — AI request/token/cost ledger (one row per day)
+/// messaging.webhook_updates - durable at-least-once webhook dedupe
+/// (Telegram `update_id`, future providers). No transcript impact.
+model WebhookUpdate {
+  id         String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  provider   String   @db.Text // telegram | whatsapp
+  updateId   String   @map("update_id") @db.Text // provider id as text (bigint-safe)
+  receivedAt DateTime @default(now()) @map("received_at") @db.Timestamptz
+
+  @@unique([provider, updateId], map: "uq_webhook_updates_provider_update")
+  @@index([receivedAt], map: "ix_webhook_updates_received")
+  @@map("webhook_updates")
+  @@schema("messaging")
+}
+
+/// messaging.chat_usage_daily - AI request/token/cost ledger (one row per day)
 model ChatUsageDaily {
   day              DateTime @id @db.Date
   requests         Int      @default(0)
