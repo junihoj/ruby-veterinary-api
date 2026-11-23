@@ -273,6 +273,206 @@ async function main(): Promise<void> {
     }
     console.log(`staff_profiles: upserted ${staffSeeds.length}`);
 
+    // --- publishing.categories / tags / articles (M7 content path) ---
+    const publishingCategorySeeds = [
+      {
+        name: 'Dog Care',
+        slug: 'dog-care',
+        description: 'Everyday health, nutrition, and training for dogs.',
+        sortOrder: 0,
+      },
+      {
+        name: 'Cat Care',
+        slug: 'cat-care',
+        description: 'Feline health, behaviour, and life-stage advice.',
+        sortOrder: 1,
+      },
+    ];
+    const categoryBySlug = new Map<string, string>();
+    for (const category of publishingCategorySeeds) {
+      const row = await prisma.category.upsert({
+        where: { slug: category.slug },
+        update: {
+          name: category.name,
+          description: category.description,
+          sortOrder: category.sortOrder,
+        },
+        create: category,
+      });
+      categoryBySlug.set(category.slug, row.id);
+    }
+
+    const publishingTagSeeds = [
+      { name: 'Nutrition', slug: 'nutrition' },
+      { name: 'Seasonal Safety', slug: 'seasonal-safety' },
+      { name: 'Dental Care', slug: 'dental-care' },
+      { name: 'Senior Pets', slug: 'senior-pets' },
+    ];
+    const tagBySlug = new Map<string, string>();
+    for (const tag of publishingTagSeeds) {
+      const row = await prisma.tag.upsert({
+        where: { slug: tag.slug },
+        update: { name: tag.name },
+        create: tag,
+      });
+      tagBySlug.set(tag.slug, row.id);
+    }
+
+    const adaUser = await prisma.user.findUnique({
+      where: { email: 'ada@ruby-veterinary.example.com' },
+    });
+    const jamesUser = await prisma.user.findUnique({
+      where: { email: 'james@ruby-veterinary.example.com' },
+    });
+    const adaProfile = adaUser
+      ? await prisma.staffProfile.findUnique({ where: { userId: adaUser.id } })
+      : null;
+    const jamesProfile = jamesUser
+      ? await prisma.staffProfile.findUnique({
+          where: { userId: jamesUser.id },
+        })
+      : null;
+
+    const publishingArticleSeeds = [
+      {
+        slug: 'feeding-senior-cats',
+        title: 'Feeding Senior Cats',
+        excerpt:
+          'How ageing changes a cat’s nutritional needs, and what to look for in a senior diet.',
+        bodyMd:
+          'Senior cats often need fewer calories but more high-quality protein. ' +
+          'Transition foods gradually and keep fresh water available. ' +
+          'Ask us for a body-condition check at your next visit.',
+        categorySlug: 'cat-care',
+        authorProfileId: adaProfile?.id ?? null,
+        tagSlugs: ['nutrition', 'senior-pets'],
+        relatedSlugs: ['dental-care-basics'],
+        status: 'published',
+        publishedAt: new Date('2026-02-10T09:00:00.000Z'),
+        seo: {
+          metaTitle: 'Feeding Senior Cats | Ruby Veterinary Clinic',
+          metaDescription:
+            'Practical nutrition advice for older cats from the Ruby Veterinary team.',
+          canonicalPath: '/blog/feeding-senior-cats',
+          noIndex: false,
+        },
+      },
+      {
+        slug: 'dental-care-basics',
+        title: 'Dental Care Basics for Dogs',
+        excerpt:
+          'Brushing, chews, and check-ups: a simple routine for healthier teeth and gums.',
+        bodyMd:
+          'Start with a soft toothbrush and pet-safe toothpaste. ' +
+          'Brush a few teeth at a time, reward calm behaviour, and build up gradually. ' +
+          'Dental chews help, but they do not replace brushing or professional checks.',
+        categorySlug: 'dog-care',
+        authorProfileId: jamesProfile?.id ?? null,
+        tagSlugs: ['dental-care'],
+        relatedSlugs: ['feeding-senior-cats'],
+        status: 'published',
+        publishedAt: new Date('2026-03-05T10:30:00.000Z'),
+        seo: {
+          metaTitle: 'Dental Care Basics for Dogs | Ruby Veterinary Clinic',
+          metaDescription:
+            'A vet nurse’s guide to brushing, chews, and routine dental checks for dogs.',
+          canonicalPath: '/blog/dental-care-basics',
+          noIndex: false,
+        },
+      },
+      {
+        slug: 'puppy-vaccination-draft',
+        title: 'Puppy Vaccination Checklist',
+        excerpt: 'A staff draft covering the core puppy vaccination schedule.',
+        bodyMd:
+          'Draft: outline the core vaccination schedule, boosters, and what owners ' +
+          'should expect after each appointment.',
+        categorySlug: 'dog-care',
+        authorProfileId: adaProfile?.id ?? null,
+        tagSlugs: ['seasonal-safety'],
+        relatedSlugs: [],
+        status: 'draft',
+        publishedAt: null,
+        seo: {
+          metaTitle: 'Puppy Vaccination Checklist | Ruby Veterinary Clinic',
+          metaDescription:
+            'A clear puppy vaccination schedule and what to expect at each visit.',
+          canonicalPath: '/blog/puppy-vaccination-checklist',
+          noIndex: true,
+        },
+      },
+    ];
+
+    for (const article of publishingArticleSeeds) {
+      const existing = await prisma.article.findUnique({
+        where: { slug: article.slug },
+        select: { id: true, seoMetadataId: true },
+      });
+      const seoId = existing?.seoMetadataId
+        ? (
+            await prisma.seoMetadata.update({
+              where: { id: existing.seoMetadataId },
+              data: article.seo,
+            })
+          ).id
+        : (await prisma.seoMetadata.create({ data: article.seo })).id;
+
+      const tagIds = article.tagSlugs.map((slug) => tagBySlug.get(slug)!);
+      const base = {
+        title: article.title,
+        excerpt: article.excerpt,
+        bodyMd: article.bodyMd,
+        status: article.status,
+        publishedAt: article.publishedAt,
+        authorProfileId: article.authorProfileId,
+        category: {
+          connect: { id: categoryBySlug.get(article.categorySlug)! },
+        },
+        seoMetadata: { connect: { id: seoId } },
+      };
+
+      await prisma.article.upsert({
+        where: { slug: article.slug },
+        update: {
+          ...base,
+          tags: {
+            deleteMany: {},
+            create: tagIds.map((tagId) => ({
+              tag: { connect: { id: tagId } },
+            })),
+          },
+        },
+        create: {
+          slug: article.slug,
+          ...base,
+          tags: {
+            create: tagIds.map((tagId) => ({
+              tag: { connect: { id: tagId } },
+            })),
+          },
+        },
+      });
+    }
+
+    // Relations are a second pass so seed order never matters.
+    for (const article of publishingArticleSeeds) {
+      await prisma.article.update({
+        where: { slug: article.slug },
+        data: {
+          relationsFrom: {
+            deleteMany: {},
+            create: article.relatedSlugs.map((slug, weight) => ({
+              weight,
+              relatedArticle: { connect: { slug } },
+            })),
+          },
+        },
+      });
+    }
+    console.log(
+      `publishing: upserted ${publishingCategorySeeds.length} categories, ${publishingTagSeeds.length} tags, ${publishingArticleSeeds.length} articles`,
+    );
+
     // --- content.downloadable_documents (care documents for M2) ---
     const documentSeeds = [
       {

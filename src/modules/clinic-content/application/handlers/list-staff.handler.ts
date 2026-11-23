@@ -4,6 +4,7 @@ import { StaffRepository } from '../../infrastructure/repositories/staff.reposit
 import { StaffProfileDto } from '../dto/clinic-content.dto';
 import { parseCursor } from '../../../../shared/cross-cutting/pagination';
 import { PrefixedId } from '../../../../shared/kernel/domain/prefixed-id';
+import { toStaffProfileDto } from '../dto/clinic-content.mapper';
 
 @QueryHandler(ListStaffQuery)
 export class ListStaffHandler implements IQueryHandler<ListStaffQuery> {
@@ -22,16 +23,7 @@ export class ListStaffHandler implements IQueryHandler<ListStaffQuery> {
     const page = hasMore ? rows.slice(0, query.limit) : rows;
 
     return {
-      data: page.map((row) => ({
-        id: PrefixedId.format('staffProfile', row.id),
-        displayName: row.displayName,
-        title: row.title,
-        credentials: row.credentials,
-        accreditations: row.accreditations,
-        bioMd: row.bioMd,
-        photoUrl: null, // presigned per-request when needed; kept null in the grid
-        specialisms: row.specialisms,
-      })),
+      data: page.map(toStaffProfileDto),
       nextCursor: hasMore
         ? PrefixedId.format('staffProfile', page[page.length - 1].id)
         : null,

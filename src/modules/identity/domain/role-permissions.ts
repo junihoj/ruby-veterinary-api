@@ -9,8 +9,9 @@ export const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
   // Care path (M4): every staff role reads and maintains client/pet records,
   // triages intake, and reviews history uploads (client-records.yaml).
   receptionist: ['ops:read', 'care:write'],
-  veterinarian: ['rx:review', 'care:write', 'ai:admin'],
-  vet_technician: ['care:write'],
+  // M7 content path: clinicians and vet techs author and publish articles.
+  veterinarian: ['rx:review', 'care:write', 'ai:admin', 'content:write'],
+  vet_technician: ['care:write', 'content:write'],
   // Catalog maintenance (commerce.yaml admin products; shop-manager parity).
   practice_manager: [
     'ops:read',
@@ -19,6 +20,7 @@ export const ROLE_PERMISSIONS: Record<string, readonly string[]> = {
     'catalog:write',
     'care:write',
     'ai:admin',
+    'content:write',
   ],
 } as const;
 

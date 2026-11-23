@@ -45,4 +45,15 @@ export abstract class ClinicContentFacadePort {
   abstract getDocumentDownload(
     query: GetDocumentDownloadQuery,
   ): Promise<DocumentDownloadDto>;
+
+  /**
+   * Internal M7 publishing lookups. Only published staff profiles are
+   * returned; `/staff` remains the public grid. These are bare-UUID inputs
+   * because callers already parsed their prefixed identifiers.
+   */
+  abstract getStaffProfileById(id: string): Promise<StaffProfileDto | null>;
+  abstract getStaffProfileByUserId(
+    userId: string,
+  ): Promise<StaffProfileDto | null>;
+  abstract listStaffProfilesByIds(ids: string[]): Promise<StaffProfileDto[]>;
 }

@@ -56,22 +56,36 @@ describe('identity/domain', () => {
       expect(permissionsForRoles(['client'])).toEqual([]);
     });
 
-    it('maps veterinarian to rx:review, care:write, and ai:admin', () => {
+    it('maps veterinarian to rx:review, care:write, content:write, and ai:admin', () => {
       expect(permissionsForRoles(['veterinarian']).sort()).toEqual(
-        ['ai:admin', 'care:write', 'rx:review'].sort(),
+        ['ai:admin', 'care:write', 'content:write', 'rx:review'].sort(),
       );
     });
 
-    it('maps practice_manager to ops + Rx review + catalog + care writes + ai:admin', () => {
+    it('maps practice_manager to ops + Rx review + catalog + care/content writes + ai:admin', () => {
       expect(permissionsForRoles(['practice_manager']).sort()).toEqual(
         [
           'ai:admin',
           'catalog:write',
           'care:write',
+          'content:write',
           'ops:inbox',
           'ops:read',
           'rx:review',
         ].sort(),
+      );
+    });
+
+    it('grants content:write to the three publishing roles (M7)', () => {
+      for (const role of [
+        'practice_manager',
+        'veterinarian',
+        'vet_technician',
+      ]) {
+        expect(permissionsForRoles([role])).toContain('content:write');
+      }
+      expect(permissionsForRoles(['receptionist'])).not.toContain(
+        'content:write',
       );
     });
 
@@ -96,6 +110,7 @@ describe('identity/domain', () => {
           'ai:admin',
           'catalog:write',
           'care:write',
+          'content:write',
           'ops:inbox',
           'ops:read',
           'rx:review',

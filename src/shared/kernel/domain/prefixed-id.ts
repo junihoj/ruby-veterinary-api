@@ -20,6 +20,7 @@ export const ENTITY_PREFIXES = {
   article: 'art',
   category: 'cat',
   tag: 'tag',
+  newsletterSubscriber: 'nls',
   appointmentRequest: 'apt',
   intakeSubmission: 'int',
   historyUpload: 'upl',

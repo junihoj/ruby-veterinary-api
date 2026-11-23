@@ -29,4 +29,23 @@ export class StaffRepository {
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
   }
+
+  async findPublishedById(id: string): Promise<StaffProfileRow | null> {
+    return this.prisma.staffProfile.findFirst({
+      where: { id, published: true },
+    });
+  }
+
+  async findPublishedByUserId(userId: string): Promise<StaffProfileRow | null> {
+    return this.prisma.staffProfile.findFirst({
+      where: { userId, published: true },
+    });
+  }
+
+  async findPublishedByIds(ids: string[]): Promise<StaffProfileRow[]> {
+    if (ids.length === 0) return [];
+    return this.prisma.staffProfile.findMany({
+      where: { id: { in: ids }, published: true },
+    });
+  }
 }

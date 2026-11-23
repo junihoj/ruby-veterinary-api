@@ -12,6 +12,9 @@ import { GetClinicContactHandler } from './application/handlers/get-clinic-conta
 import { ListServicesHandler } from './application/handlers/list-services.handler';
 import { GetServiceHandler } from './application/handlers/get-service.handler';
 import { ListStaffHandler } from './application/handlers/list-staff.handler';
+import { GetStaffProfileByIdHandler } from './application/handlers/get-staff-profile-by-id.handler';
+import { GetStaffProfileByUserIdHandler } from './application/handlers/get-staff-profile-by-user-id.handler';
+import { ListStaffProfilesByIdsHandler } from './application/handlers/list-staff-profiles-by-ids.handler';
 import { ListDocumentsHandler } from './application/handlers/list-documents.handler';
 import { GetDocumentDownloadHandler } from './application/handlers/get-document-download.handler';
 import { ClinicContentController } from './presentation/clinic-content.controller';
@@ -36,6 +39,9 @@ import { ClinicContentController } from './presentation/clinic-content.controlle
     ListServicesHandler,
     GetServiceHandler,
     ListStaffHandler,
+    GetStaffProfileByIdHandler,
+    GetStaffProfileByUserIdHandler,
+    ListStaffProfilesByIdsHandler,
     ListDocumentsHandler,
     GetDocumentDownloadHandler,
   ],

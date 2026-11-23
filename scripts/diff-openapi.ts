@@ -322,6 +322,62 @@ function main(): void {
     ],
     // messaging.yaml (M6b — Telegram staff handoff webhook)
     ['POST', '/webhooks/telegram', ['telegramWebhook', '200', '401']],
+    // publishing.yaml (M7 — public reads, staff authoring + draft reads,
+    // taxonomy, and newsletter capture)
+    ['GET', '/articles', ['listArticles', '200']],
+    [
+      'GET',
+      '/articles/{slug}',
+      ['getArticle', '200', '404'],
+    ],
+    [
+      'POST',
+      '/articles',
+      ['createArticle', '201', '400', '401', '403'],
+    ],
+    [
+      'PATCH',
+      '/articles/{id}',
+      ['updateArticle', '200', '400', '401', '403', '404'],
+    ],
+    [
+      'POST',
+      '/articles/{id}/publish',
+      ['publishArticle', '200', '401', '403', '404'],
+    ],
+    [
+      'GET',
+      '/admin/articles',
+      ['listAdminArticles', '200', '400', '401', '403'],
+    ],
+    [
+      'GET',
+      '/admin/articles/{id}',
+      ['getAdminArticle', '200', '401', '403', '404'],
+    ],
+    ['GET', '/categories', ['listCategories', '200']],
+    [
+      'POST',
+      '/categories',
+      ['createCategory', '201', '400', '401', '403'],
+    ],
+    [
+      'PATCH',
+      '/categories/{id}',
+      ['updateCategory', '200', '400', '401', '403', '404'],
+    ],
+    ['GET', '/tags', ['listTags', '200']],
+    ['POST', '/tags', ['createTag', '201', '400', '401', '403']],
+    [
+      'PATCH',
+      '/tags/{id}',
+      ['updateTag', '200', '400', '401', '403', '404'],
+    ],
+    [
+      'POST',
+      '/newsletter/subscribe',
+      ['subscribeNewsletter', '201', '400', '429'],
+    ],
   ];
 
   for (const [method, path, values] of expectedOps) {

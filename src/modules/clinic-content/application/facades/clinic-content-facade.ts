@@ -17,8 +17,11 @@ import { GetClinicContactQuery } from '../queries/get-clinic-contact.query';
 import { GetClinicHoursQuery } from '../queries/get-clinic-hours.query';
 import { GetDocumentDownloadQuery } from '../queries/get-document-download.query';
 import { GetServiceQuery } from '../queries/get-service.query';
+import { GetStaffProfileByIdQuery } from '../queries/get-staff-profile-by-id.query';
+import { GetStaffProfileByUserIdQuery } from '../queries/get-staff-profile-by-user-id.query';
 import { ListDocumentsQuery } from '../queries/list-documents.query';
 import { ListServicesQuery } from '../queries/list-services.query';
+import { ListStaffProfilesByIdsQuery } from '../queries/list-staff-profiles-by-ids.query';
 import { ListStaffQuery } from '../queries/list-staff.query';
 
 /**
@@ -61,5 +64,17 @@ export class ClinicContentFacade implements ClinicContentFacadePort {
     query: GetDocumentDownloadQuery,
   ): Promise<DocumentDownloadDto> {
     return this.queries.execute(query);
+  }
+
+  getStaffProfileById(id: string): Promise<StaffProfileDto | null> {
+    return this.queries.execute(new GetStaffProfileByIdQuery(id));
+  }
+
+  getStaffProfileByUserId(userId: string): Promise<StaffProfileDto | null> {
+    return this.queries.execute(new GetStaffProfileByUserIdQuery(userId));
+  }
+
+  listStaffProfilesByIds(ids: string[]): Promise<StaffProfileDto[]> {
+    return this.queries.execute(new ListStaffProfilesByIdsQuery(ids));
   }
 }
